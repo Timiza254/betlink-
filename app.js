@@ -1,5 +1,6 @@
 import { firebaseApp, ADMIN_PASSCODE } from "./firebase-config.js";
 import { fetchUpcomingFixtures } from "./sports.js";
+import { clubColor } from "./club-colors.js";
 import {
   getAuth, signInAnonymously, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
@@ -98,14 +99,16 @@ matchSelect.addEventListener("change", () => {
   if (!f) return;
   pickOptions.innerHTML = "";
   const options = [
-    { side: "home", label: `${f.homeTeam} to win` },
-    { side: "draw", label: "Draw" },
-    { side: "away", label: `${f.awayTeam} to win` }
+    { side: "home", label: `${f.homeTeam} to win`, color: clubColor(f.homeTeam), crest: f.homeCrest },
+    { side: "draw", label: "Draw", color: "#6B7674", crest: "" },
+    { side: "away", label: `${f.awayTeam} to win`, color: clubColor(f.awayTeam), crest: f.awayCrest }
   ];
   options.forEach(opt => {
     const lbl = document.createElement("label");
     lbl.className = "pick-option";
-    lbl.innerHTML = `<input type="radio" name="matchPick" value="${opt.side}"> ${opt.label}`;
+    lbl.style.setProperty("--pick-color", opt.color);
+    const crestHtml = opt.crest ? `<img src="${opt.crest}" alt="" class="pick-crest">` : "";
+    lbl.innerHTML = `<input type="radio" name="matchPick" value="${opt.side}">${crestHtml}<span>${opt.label}</span>`;
     lbl.querySelector("input").addEventListener("change", () => {
       document.querySelectorAll(".pick-option").forEach(el => el.classList.remove("selected"));
       lbl.classList.add("selected");
@@ -147,8 +150,11 @@ matchBetForm.addEventListener("submit", async (e) => {
         betType: "match",
         homeTeam: f.homeTeam,
         awayTeam: f.awayTeam,
+        homeCrest: f.homeCrest || "",
+        awayCrest: f.awayCrest || "",
         kickoff: f.kickoff,
         pickLabel: selectedPick.label,
+        pickSide: selectedPick.side,
         status: "open",
         creatorId: currentUser.uid,
         creatorName: currentProfile.name,
@@ -344,6 +350,10 @@ async function resolveBet(betId, winnerId) {
 function slipCard(bet, id, opts = {}) {
   const div = document.createElement("div");
   div.className = "slip";
+  if (bet.betType === "match" && bet.pickSide) {
+    const teamForColor = bet.pickSide === "home" ? bet.homeTeam : bet.pickSide === "away" ? bet.awayTeam : null;
+    if (teamForColor) div.style.borderLeftColor = clubColor(teamForColor);
+  }
 
   let stampHtml = "";
   if (bet.status === "matched") stampHtml = `<div class="stamp matched">Matched</div>`;
@@ -361,7 +371,12 @@ function slipCard(bet, id, opts = {}) {
     : `<div class="slip-parties">Posted by ${bet.creatorName}</div>`;
 
   const fixtureMetaHtml = bet.betType === "match"
-    ? `<p class="fixture-meta">${escapeHtml(bet.homeTeam)} vs ${escapeHtml(bet.awayTeam)} · Kickoff ${new Date(bet.kickoff).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>`
+    ? `<div class="fixture-badge">
+        ${bet.homeCrest ? `<img src="${bet.homeCrest}" alt="" class="team-crest">` : ""}
+        <span class="fixture-vs">${escapeHtml(bet.homeTeam)} vs ${escapeHtml(bet.awayTeam)}</span>
+        ${bet.awayCrest ? `<img src="${bet.awayCrest}" alt="" class="team-crest">` : ""}
+      </div>
+      <p class="fixture-meta">Kickoff ${new Date(bet.kickoff).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>`
     : "";
 
   div.innerHTML = `

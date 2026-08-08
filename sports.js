@@ -36,6 +36,8 @@ export async function fetchUpcomingFixtures(days = 21) {
         id: m.id,
         homeTeam: m.homeTeam.name,
         awayTeam: m.awayTeam.name,
+        homeCrest: m.homeTeam.crest || "",
+        awayCrest: m.awayTeam.crest || "",
         kickoff: m.utcDate
       }));
     } catch (err) {

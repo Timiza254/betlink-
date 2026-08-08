@@ -400,7 +400,12 @@ label input, label textarea, label select { margin-top: 0.5rem; }
   font-weight: 700;
   cursor: pointer;
 }
-.pick-option input { width: auto; margin: 0; accent-color: var(--green); }
+.pick-option input {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+}
 .pick-option.selected { border-color: var(--green); background: rgba(0,166,81,0.08); color: var(--green-dark); }
 
 .fixture-meta {
@@ -415,4 +420,46 @@ label input, label textarea, label select { margin-top: 0.5rem; }
   color: var(--ink);
   margin-bottom: 0.5rem;
   font-weight: 700;
+}
+
+.app-footer {
+  text-align: center;
+  padding: 1.2rem 1rem 5.5rem;
+  font-size: 0.72rem;
+  color: var(--grey);
+}
+.app-footer a { color: var(--grey); font-weight: 600; }
+
+/* ===== TEAM COLORS / CRESTS ===== */
+.pick-option {
+  border-top: 3px solid var(--pick-color, var(--line));
+}
+.pick-option.selected {
+  border-color: var(--pick-color, var(--green));
+  background: color-mix(in srgb, var(--pick-color, var(--green)) 8%, white);
+}
+.pick-crest {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  margin-bottom: 0.15rem;
+}
+.pick-option { flex-direction: column; }
+
+.fixture-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+}
+.team-crest {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.fixture-vs {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--grey);
+  font-weight: 600;
 }

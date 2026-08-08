@@ -71,8 +71,8 @@ for you to run.
 ## Deploying to GitHub Pages
 
 1. Push all these files (`index.html`, `style.css`, `app.js`,
-   `firebase-config.js`, `sports.js`, `sports-config.js`) to the root of
-   your repo — same level, no subfolder.
+   `firebase-config.js`, `sports.js`, `sports-config.js`, `club-colors.js`)
+   to the root of your repo — same level, no subfolder.
 2. In repo Settings → Pages, confirm source is `main` branch, `/ (root)`.
 3. Visit `https://<yourusername>.github.io/<repo-name>/` (case-sensitive).
 
