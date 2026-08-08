@@ -5,49 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Betlink — Matched bets, your terms</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ===== AUTH SCREEN ===== -->
+<!-- ===== NAME ENTRY SCREEN ===== -->
 <section id="authScreen" class="auth-screen">
   <div class="auth-card">
     <div class="brand">
       <span class="brand-mark">B</span>
       <h1>Betlink</h1>
     </div>
-    <p class="tagline">No house. No odds stacked against you.<br>Just two sides of a bet, matched — and held to it.</p>
+    <p class="tagline">Match a bet. Back your side. Get paid when you're right.</p>
 
-    <div class="auth-tabs">
-      <button class="auth-tab active" data-tab="login">Log in</button>
-      <button class="auth-tab" data-tab="signup">Sign up</button>
-    </div>
-
-    <form id="loginForm" class="auth-form">
-      <label>Email
-        <input type="email" id="loginEmail" required autocomplete="email">
+    <form id="nameForm" class="auth-form">
+      <label>Your name
+        <input type="text" id="nameInput" required autocomplete="name" placeholder="e.g. Victor">
       </label>
-      <label>Password
-        <input type="password" id="loginPassword" required autocomplete="current-password">
-      </label>
-      <button type="submit" class="btn-primary">Log in</button>
-      <p class="auth-error" id="loginError"></p>
-    </form>
-
-    <form id="signupForm" class="auth-form hidden">
-      <label>Display name
-        <input type="text" id="signupName" required autocomplete="name">
-      </label>
-      <label>Email
-        <input type="email" id="signupEmail" required autocomplete="email">
-      </label>
-      <label>Password
-        <input type="password" id="signupPassword" required minlength="6" autocomplete="new-password">
-      </label>
-      <button type="submit" class="btn-primary">Create account</button>
-      <p class="auth-error" id="signupError"></p>
-      <p class="auth-note">Starts you with 1,000 virtual coins. No real money involved — testing phase.</p>
+      <button type="submit" class="btn-primary">Continue</button>
+      <p class="auth-error" id="nameError"></p>
+      <p class="auth-note">Starts you with 1,000 virtual coins. No real money — testing phase.</p>
     </form>
   </div>
 </section>
@@ -65,7 +43,8 @@
       <span class="balance-value" id="balanceValue">0</span>
       <span class="balance-unit">coins</span>
     </div>
-    <button id="logoutBtn" class="btn-ghost">Log out</button>
+    <button id="adminUnlockBtn" class="btn-ghost">Admin</button>
+    <button id="logoutBtn" class="btn-ghost">Reset</button>
   </header>
 
   <nav class="tabbar">
@@ -101,9 +80,37 @@
     <section id="view-create" class="view">
       <div class="view-header">
         <h2>Write a slip</h2>
-        <p class="view-sub">Describe the wager plainly — whoever matches it is agreeing to your exact terms.</p>
+        <p class="view-sub">Pick a live match, or write your own terms.</p>
       </div>
-      <form id="createBetForm" class="slip-form">
+
+      <div class="bet-mode-tabs">
+        <button class="bet-mode-tab active" data-mode="match" type="button">Live match</button>
+        <button class="bet-mode-tab" data-mode="custom" type="button">Custom</button>
+      </div>
+
+      <!-- LIVE MATCH MODE -->
+      <form id="matchBetForm" class="slip-form">
+        <label>Fixture
+          <select id="matchSelect" required>
+            <option value="">Loading fixtures…</option>
+          </select>
+        </label>
+        <p id="matchLoadError" class="auth-error"></p>
+
+        <div id="matchPickWrap" class="hidden">
+          <label>You're backing
+            <div class="pick-options" id="pickOptions"></div>
+          </label>
+          <label>Your stake (coins)
+            <input type="number" id="matchStake" min="1" step="1" required placeholder="100">
+          </label>
+          <button type="submit" class="btn-primary">Post slip</button>
+          <p class="auth-error" id="matchBetError"></p>
+        </div>
+      </form>
+
+      <!-- CUSTOM MODE -->
+      <form id="createBetForm" class="slip-form hidden">
         <label>What's the bet?
           <textarea id="betTerms" rows="3" placeholder="e.g. Arsenal beat Chelsea by 2+ goals, Sat Aug 15" required maxlength="240"></textarea>
         </label>

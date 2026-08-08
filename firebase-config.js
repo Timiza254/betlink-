@@ -16,6 +16,6 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 
-// Set the email address(es) that should see the Admin tab and be
-// able to resolve bets. Add more emails to the array as needed.
-export const ADMIN_EMAILS = ["timizalakevict@gmail.com"];
+// Passcode that unlocks the Admin tab on a device (entered via the
+// "Admin" button in the app). Change this any time — it only lives here.
+export const ADMIN_PASSCODE = "geo254@gG";

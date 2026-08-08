@@ -1,7 +1,7 @@
-import { firebaseApp, ADMIN_EMAILS } from "./firebase-config.js";
+import { firebaseApp, ADMIN_PASSCODE } from "./firebase-config.js";
+import { fetchUpcomingFixtures } from "./sports.js";
 import {
-  getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, onAuthStateChanged
+  getAuth, signInAnonymously, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, setDoc, getDoc, updateDoc, collection,
@@ -21,13 +21,14 @@ let unsubOpen, unsubMine, unsubAdmin;
 const authScreen = document.getElementById("authScreen");
 const appShell = document.getElementById("appShell");
 
-const loginForm = document.getElementById("loginForm");
-const signupForm = document.getElementById("signupForm");
-const authTabs = document.querySelectorAll(".auth-tab");
+const nameForm = document.getElementById("nameForm");
+const nameInput = document.getElementById("nameInput");
+const nameError = document.getElementById("nameError");
 
 const balanceValue = document.getElementById("balanceValue");
 const logoutBtn = document.getElementById("logoutBtn");
 const adminTabBtn = document.getElementById("adminTabBtn");
+const adminUnlockBtn = document.getElementById("adminUnlockBtn");
 
 const tabBtns = document.querySelectorAll(".tab-btn");
 const views = document.querySelectorAll(".view");
@@ -40,62 +41,185 @@ const adminBetsList = document.getElementById("adminBetsList");
 const adminBetsEmpty = document.getElementById("adminBetsEmpty");
 
 const createBetForm = document.getElementById("createBetForm");
+const matchBetForm = document.getElementById("matchBetForm");
+const betModeTabs = document.querySelectorAll(".bet-mode-tab");
+const matchSelect = document.getElementById("matchSelect");
+const matchLoadError = document.getElementById("matchLoadError");
+const matchPickWrap = document.getElementById("matchPickWrap");
+const pickOptions = document.getElementById("pickOptions");
+const matchStakeInput = document.getElementById("matchStake");
+const matchBetError = document.getElementById("matchBetError");
 
-// ---------- Auth tab switching ----------
-authTabs.forEach(tab => {
+let fixtures = [];
+let selectedPick = null; // { label, side: 'home'|'draw'|'away' }
+
+// ---------- Bet mode toggle (live match vs custom) ----------
+betModeTabs.forEach(tab => {
   tab.addEventListener("click", () => {
-    authTabs.forEach(t => t.classList.remove("active"));
+    betModeTabs.forEach(t => t.classList.remove("active"));
     tab.classList.add("active");
-    const isLogin = tab.dataset.tab === "login";
-    loginForm.classList.toggle("hidden", !isLogin);
-    signupForm.classList.toggle("hidden", isLogin);
+    const isMatch = tab.dataset.mode === "match";
+    matchBetForm.classList.toggle("hidden", !isMatch);
+    createBetForm.classList.toggle("hidden", isMatch);
   });
 });
 
-// ---------- Sign up ----------
-signupForm.addEventListener("submit", async (e) => {
+// ---------- Load fixtures ----------
+async function loadFixtures() {
+  matchLoadError.textContent = "";
+  try {
+    fixtures = await fetchUpcomingFixtures();
+    if (fixtures.length === 0) {
+      matchSelect.innerHTML = `<option value="">No upcoming fixtures found</option>`;
+      return;
+    }
+    matchSelect.innerHTML = `<option value="">Choose a fixture…</option>` +
+      fixtures.map((f, i) => {
+        const d = new Date(f.kickoff);
+        const when = d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+          ", " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+        return `<option value="${i}">${when} — ${f.homeTeam} vs ${f.awayTeam}</option>`;
+      }).join("");
+  } catch (err) {
+    if (err.message === "no-api-key") {
+      matchLoadError.textContent = "Live fixtures aren't set up yet — add a free football-data.org API key to sports-config.js, or use the Custom tab for now.";
+    } else {
+      matchLoadError.textContent = "Couldn't load fixtures right now. Try the Custom tab, or refresh in a bit.";
+    }
+    matchSelect.innerHTML = `<option value="">Unavailable</option>`;
+  }
+}
+loadFixtures();
+
+matchSelect.addEventListener("change", () => {
+  const f = fixtures[matchSelect.value];
+  matchPickWrap.classList.toggle("hidden", !f);
+  selectedPick = null;
+  if (!f) return;
+  pickOptions.innerHTML = "";
+  const options = [
+    { side: "home", label: `${f.homeTeam} to win` },
+    { side: "draw", label: "Draw" },
+    { side: "away", label: `${f.awayTeam} to win` }
+  ];
+  options.forEach(opt => {
+    const lbl = document.createElement("label");
+    lbl.className = "pick-option";
+    lbl.innerHTML = `<input type="radio" name="matchPick" value="${opt.side}"> ${opt.label}`;
+    lbl.querySelector("input").addEventListener("change", () => {
+      document.querySelectorAll(".pick-option").forEach(el => el.classList.remove("selected"));
+      lbl.classList.add("selected");
+      selectedPick = opt;
+    });
+    pickOptions.appendChild(lbl);
+  });
+});
+
+// ---------- Create bet: live match mode ----------
+matchBetForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const errEl = document.getElementById("signupError");
-  errEl.textContent = "";
-  const name = document.getElementById("signupName").value.trim();
-  const email = document.getElementById("signupEmail").value.trim();
-  const password = document.getElementById("signupPassword").value;
+  matchBetError.textContent = "";
+  const f = fixtures[matchSelect.value];
+  const stake = parseInt(matchStakeInput.value, 10);
+
+  if (!f || !selectedPick) {
+    matchBetError.textContent = "Pick a fixture and a side first.";
+    return;
+  }
+  if (!currentProfile || stake > currentProfile.balance) {
+    matchBetError.textContent = "You don't have enough coins for that stake.";
+    return;
+  }
+
+  const terms = `${f.homeTeam} vs ${f.awayTeam} — backing: ${selectedPick.label}`;
+  const deadline = new Date(f.kickoff).toISOString().slice(0, 10);
 
   try {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await setDoc(doc(db, "users", cred.user.uid), {
+    await runTransaction(db, async (tx) => {
+      const userRef = doc(db, "users", currentUser.uid);
+      const userSnap = await tx.get(userRef);
+      const bal = userSnap.data().balance;
+      if (stake > bal) throw new Error("insufficient");
+      tx.update(userRef, { balance: bal - stake });
+      const betRef = doc(collection(db, "bets"));
+      tx.set(betRef, {
+        terms, stake, deadline,
+        betType: "match",
+        homeTeam: f.homeTeam,
+        awayTeam: f.awayTeam,
+        kickoff: f.kickoff,
+        pickLabel: selectedPick.label,
+        status: "open",
+        creatorId: currentUser.uid,
+        creatorName: currentProfile.name,
+        matcherId: null,
+        matcherName: null,
+        winnerId: null,
+        createdAt: serverTimestamp()
+      });
+    });
+    matchBetForm.reset();
+    matchPickWrap.classList.add("hidden");
+    setView("mine");
+  } catch (err) {
+    matchBetError.textContent = "Couldn't post the slip. Try again.";
+  }
+});
+
+// ---------- Anonymous sign-in on load ----------
+signInAnonymously(auth).catch(() => {
+  nameError.textContent = "Couldn't connect. Check your connection and reload.";
+});
+
+// ---------- Name form (first-time setup) ----------
+nameForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  nameError.textContent = "";
+  const name = nameInput.value.trim();
+  if (!name) return;
+  try {
+    await setDoc(doc(db, "users", currentUser.uid), {
       name,
-      email,
       balance: STARTING_BALANCE,
       createdAt: serverTimestamp()
     });
+    currentProfile = { name, balance: STARTING_BALANCE };
+    enterApp();
   } catch (err) {
-    errEl.textContent = friendlyError(err);
+    nameError.textContent = "Something went wrong. Try again.";
   }
 });
 
-// ---------- Log in ----------
-loginForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const errEl = document.getElementById("loginError");
-  errEl.textContent = "";
-  const email = document.getElementById("loginEmail").value.trim();
-  const password = document.getElementById("loginPassword").value;
-  try {
-    await signInWithEmailAndPassword(auth, email, password);
-  } catch (err) {
-    errEl.textContent = friendlyError(err);
+// ---------- Admin unlock (passcode) ----------
+adminUnlockBtn.addEventListener("click", () => {
+  const code = prompt("Enter admin passcode:");
+  if (code === null) return;
+  if (code === ADMIN_PASSCODE) {
+    localStorage.setItem("betlink_admin", "1");
+    adminTabBtn.classList.remove("hidden");
+    alert("Admin unlocked on this device.");
+  } else {
+    alert("Wrong passcode.");
   }
 });
 
-logoutBtn.addEventListener("click", () => signOut(auth));
+function isAdminUnlocked() {
+  return localStorage.getItem("betlink_admin") === "1";
+}
 
-function friendlyError(err) {
-  const code = err.code || "";
-  if (code.includes("email-already-in-use")) return "That email's already registered — try logging in instead.";
-  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) return "Email or password doesn't match.";
-  if (code.includes("weak-password")) return "Password needs at least 6 characters.";
-  return "Something went wrong. Try again.";
+// "Reset" only clears admin unlock on this device — there's no login to undo
+// since accounts are tied to the browser (anonymous session).
+logoutBtn.addEventListener("click", () => {
+  localStorage.removeItem("betlink_admin");
+  location.reload();
+});
+
+function enterApp() {
+  authScreen.classList.add("hidden");
+  appShell.classList.remove("hidden");
+  balanceValue.textContent = currentProfile ? currentProfile.balance : "—";
+  adminTabBtn.classList.toggle("hidden", !isAdminUnlocked());
+  subscribeAll();
 }
 
 // ---------- Auth state ----------
@@ -103,12 +227,13 @@ onAuthStateChanged(auth, async (user) => {
   currentUser = user;
   if (user) {
     const snap = await getDoc(doc(db, "users", user.uid));
-    currentProfile = snap.exists() ? snap.data() : null;
-    authScreen.classList.add("hidden");
-    appShell.classList.remove("hidden");
-    balanceValue.textContent = currentProfile ? currentProfile.balance : "—";
-    adminTabBtn.classList.toggle("hidden", !ADMIN_EMAILS.includes(user.email));
-    subscribeAll();
+    if (snap.exists()) {
+      currentProfile = snap.data();
+      enterApp();
+    } else {
+      // First time on this device — show name entry, stay on authScreen
+      currentProfile = null;
+    }
   } else {
     currentProfile = null;
     appShell.classList.add("hidden");
@@ -153,6 +278,7 @@ createBetForm.addEventListener("submit", async (e) => {
       const betRef = doc(collection(db, "bets"));
       tx.set(betRef, {
         terms, stake, deadline,
+        betType: "custom",
         status: "open",
         creatorId: currentUser.uid,
         creatorName: currentProfile.name,
@@ -234,9 +360,14 @@ function slipCard(bet, id, opts = {}) {
     ? `<div class="slip-parties">${bet.creatorName} vs ${bet.matcherName || "—"}${bet.status === "resolved" ? `<br>Winner: ${bet.winnerId === bet.creatorId ? bet.creatorName : bet.matcherName}` : ""}</div>`
     : `<div class="slip-parties">Posted by ${bet.creatorName}</div>`;
 
+  const fixtureMetaHtml = bet.betType === "match"
+    ? `<p class="fixture-meta">${escapeHtml(bet.homeTeam)} vs ${escapeHtml(bet.awayTeam)} · Kickoff ${new Date(bet.kickoff).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>`
+    : "";
+
   div.innerHTML = `
     ${stampHtml}
     <p class="slip-terms">${escapeHtml(bet.terms)}</p>
+    ${fixtureMetaHtml}
     ${partiesHtml}
     <div class="slip-meta">
       <span>Resolves ${bet.deadline || "—"}</span>
@@ -260,15 +391,36 @@ function slipCard(bet, id, opts = {}) {
   if (opts.mode === "admin") {
     const wrap = document.createElement("div");
     wrap.className = "admin-choice";
-    const btnA = document.createElement("button");
-    btnA.className = "slip-btn primary";
-    btnA.textContent = `${bet.creatorName} wins`;
-    btnA.addEventListener("click", () => resolveBet(id, bet.creatorId));
-    const btnB = document.createElement("button");
-    btnB.className = "slip-btn primary";
-    btnB.textContent = `${bet.matcherName} wins`;
-    btnB.addEventListener("click", () => resolveBet(id, bet.matcherId));
-    wrap.append(btnA, btnB);
+
+    if (bet.betType === "match") {
+      const q = document.createElement("p");
+      q.className = "resolve-question";
+      q.textContent = `Did this happen: "${bet.pickLabel}"?`;
+      div.querySelector("[data-actions]").before(q);
+
+      const btnYes = document.createElement("button");
+      btnYes.className = "slip-btn primary";
+      btnYes.textContent = "Yes — creator wins";
+      btnYes.addEventListener("click", () => resolveBet(id, bet.creatorId));
+
+      const btnNo = document.createElement("button");
+      btnNo.className = "slip-btn primary";
+      btnNo.textContent = "No — matcher wins";
+      btnNo.addEventListener("click", () => resolveBet(id, bet.matcherId));
+
+      wrap.append(btnYes, btnNo);
+    } else {
+      const btnA = document.createElement("button");
+      btnA.className = "slip-btn primary";
+      btnA.textContent = `${bet.creatorName} wins`;
+      btnA.addEventListener("click", () => resolveBet(id, bet.creatorId));
+      const btnB = document.createElement("button");
+      btnB.className = "slip-btn primary";
+      btnB.textContent = `${bet.matcherName} wins`;
+      btnB.addEventListener("click", () => resolveBet(id, bet.matcherId));
+      wrap.append(btnA, btnB);
+    }
+
     actions.appendChild(wrap);
   }
 
@@ -306,7 +458,7 @@ function subscribeAll() {
   unsubMine = onSnapshot(qMineA, renderMine);
   onSnapshot(qMineB, renderMine);
 
-  if (ADMIN_EMAILS.includes(currentUser.email)) {
+  if (isAdminUnlocked()) {
     const qAdmin = query(betsRef, where("status", "==", "matched"));
     unsubAdmin = onSnapshot(qAdmin, (snap) => {
       adminBetsList.innerHTML = "";
