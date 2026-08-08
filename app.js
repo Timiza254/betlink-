@@ -36,6 +36,9 @@ const views = document.querySelectorAll(".view");
 
 const openBetsList = document.getElementById("openBetsList");
 const openBetsEmpty = document.getElementById("openBetsEmpty");
+const sportFilterBtns = document.querySelectorAll(".sport-filter:not(.soon)");
+let currentSportFilter = "all";
+let latestOpenBets = []; // [{id, data}]
 const myBetsList = document.getElementById("myBetsList");
 const myBetsEmpty = document.getElementById("myBetsEmpty");
 const adminBetsList = document.getElementById("adminBetsList");
@@ -148,6 +151,7 @@ matchBetForm.addEventListener("submit", async (e) => {
       tx.set(betRef, {
         terms, stake, deadline,
         betType: "match",
+        sport: "football",
         homeTeam: f.homeTeam,
         awayTeam: f.awayTeam,
         homeCrest: f.homeCrest || "",
@@ -249,6 +253,31 @@ onAuthStateChanged(auth, async (user) => {
     if (unsubAdmin) unsubAdmin();
   }
 });
+
+// ---------- Sport filter ----------
+sportFilterBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".sport-filter").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentSportFilter = btn.dataset.sport;
+    renderOpenBets();
+  });
+});
+document.querySelectorAll(".sport-filter.soon").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const label = btn.querySelector("span:nth-child(2)")?.textContent || "This sport";
+    alert(`${label} is coming soon.`);
+  });
+});
+
+function renderOpenBets() {
+  const filtered = currentSportFilter === "all"
+    ? latestOpenBets
+    : latestOpenBets.filter(({ data }) => data.sport === currentSportFilter);
+  openBetsList.innerHTML = "";
+  openBetsEmpty.classList.toggle("hidden", filtered.length !== 0);
+  filtered.forEach(({ id, data }) => openBetsList.appendChild(slipCard(data, id, { mode: "open" })));
+}
 
 // ---------- Tab navigation ----------
 function setView(name) {
@@ -454,9 +483,9 @@ function subscribeAll() {
 
   const qOpen = query(betsRef, where("status", "==", "open"), orderBy("createdAt", "desc"));
   unsubOpen = onSnapshot(qOpen, (snap) => {
-    openBetsList.innerHTML = "";
-    openBetsEmpty.classList.toggle("hidden", !snap.empty);
-    snap.forEach(d => openBetsList.appendChild(slipCard(d.data(), d.id, { mode: "open" })));
+    latestOpenBets = [];
+    snap.forEach(d => latestOpenBets.push({ id: d.id, data: d.data() }));
+    renderOpenBets();
   });
 
   const qMineA = query(betsRef, where("creatorId", "==", currentUser.uid));
