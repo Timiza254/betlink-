@@ -84,7 +84,7 @@ async function loadFixtures() {
     if (err.message === "no-api-key") {
       matchLoadError.textContent = "Live fixtures aren't set up yet — add a free football-data.org API key to sports-config.js, or use the Custom tab for now.";
     } else {
-      matchLoadError.textContent = "Couldn't load fixtures right now. Try the Custom tab, or refresh in a bit.";
+      matchLoadError.textContent = "Couldn't load fixtures: " + err.message + ". Try the Custom tab for now.";
     }
     matchSelect.innerHTML = `<option value="">Unavailable</option>`;
   }
