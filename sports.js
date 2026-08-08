@@ -14,7 +14,11 @@ export async function fetchUpcomingFixtures(days = 21) {
     `${BASE}/competitions/${COMPETITION_CODE}/matches?status=SCHEDULED&dateFrom=${dateFrom}&dateTo=${to}`,
     { headers: { "X-Auth-Token": FOOTBALL_DATA_TOKEN } }
   );
-  if (!res.ok) throw new Error(`fixtures-fetch-failed-${res.status}`);
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json()).message || ""; } catch (_) {}
+    throw new Error(`fixtures-fetch-failed-${res.status}${detail ? ": " + detail : ""}`);
+  }
   const data = await res.json();
   return (data.matches || []).map(m => ({
     id: m.id,
