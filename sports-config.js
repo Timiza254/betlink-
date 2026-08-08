@@ -9,7 +9,7 @@
 // low-risk for a free-tier key (worst case: someone burns your rate
 // limit), but don't reuse a paid-tier key here later.
 // ============================================================
-export const FOOTBALL_DATA_TOKEN = "YOUR_FOOTBALL_DATA_API_KEY";
+export const FOOTBALL_DATA_TOKEN = "c70203c46fdc4fa1ae5f2eeb29a6e413";
 
 // Which competition to pull fixtures from. PL = English Premier League.
 // Other free-tier codes: CL (Champions League), ELC (Championship).
