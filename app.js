@@ -19,10 +19,14 @@ const db = getFirestore(firebaseApp);
 const STARTING_BALANCE = 1000;
 
 // Keep registered users logged in while navigating around the app
-// and when the page is refreshed/reloaded.
-setPersistence(auth, browserLocalPersistence).catch((err) => {
-  console.error("Could not enable persistent login:", err);
-});
+// and when the page is refreshed/reloaded. The auth state listener waits
+// for this to finish before deciding whether the visitor is anonymous
+// or a registered user. This prevents an initial anonymous-auth race.
+const authPersistenceReady = setPersistence(auth, browserLocalPersistence)
+  .catch((err) => {
+    console.error("Could not enable persistent login:", err);
+    return null;
+  });
 
 
 // ============================================================
@@ -347,15 +351,26 @@ async function postMatchBet(f, stake) {
 }
 
 // ---------- Public-first authentication ----------
+let explicitAuthInProgress = false;
+let anonymousSessionStarting = false;
+
 async function startPublicSession() {
+  if (explicitAuthInProgress || anonymousSessionStarting || auth.currentUser) return;
+
+  anonymousSessionStarting = true;
   try {
     // Anonymous auth lets public users browse Firestore-backed demo data
     // without granting them access to a coin balance.
-    if (!auth.currentUser) await signInAnonymously(auth);
+    await authPersistenceReady;
+    if (!auth.currentUser && !explicitAuthInProgress) {
+      await signInAnonymously(auth);
+    }
   } catch (err) {
     console.error(err);
     showPublicMode();
     publicFixturesError.textContent = "Public mode is available, but live bet data may be unavailable.";
+  } finally {
+    anonymousSessionStarting = false;
   }
 }
 
@@ -390,7 +405,9 @@ authRegisterTab.addEventListener("click", () => setAuthMode("register"));
 loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   loginError.textContent = "";
+  explicitAuthInProgress = true;
   try {
+    await authPersistenceReady;
     const email = loginEmail.value.trim();
     const password = loginPassword.value;
     await signInWithEmailAndPassword(auth, email, password);
@@ -402,12 +419,15 @@ loginForm.addEventListener("submit", async (e) => {
       err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password"
         ? "Email or password is incorrect."
         : "Couldn't log in. Check your details and try again.";
+  } finally {
+    explicitAuthInProgress = false;
   }
 });
 
 registerForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   registerError.textContent = "";
+  explicitAuthInProgress = true;
 
   const name = registerName.value.trim();
   const email = registerEmail.value.trim();
@@ -416,10 +436,12 @@ registerForm.addEventListener("submit", async (e) => {
 
   if (password !== password2) {
     registerError.textContent = "Passwords do not match.";
+    explicitAuthInProgress = false;
     return;
   }
   if (password.length < 6) {
     registerError.textContent = "Password must be at least 6 characters.";
+    explicitAuthInProgress = false;
     return;
   }
 
@@ -472,6 +494,8 @@ registerForm.addEventListener("submit", async (e) => {
     } else {
       registerError.textContent = "Couldn't create the account. Check your details and try again.";
     }
+  } finally {
+    explicitAuthInProgress = false;
   }
 });
 
@@ -577,6 +601,17 @@ function enterApp() {
 
 // ---------- Auth state ----------
 onAuthStateChanged(auth, async (user) => {
+  // Do not make an auth-mode decision until Firebase has restored the
+  // browser's persisted session. This is the key fix for the navigation
+  // "logout" problem.
+  await authPersistenceReady;
+
+  // Ignore a transient null/anonymous state while the user is explicitly
+  // logging in or registering.
+  if (explicitAuthInProgress && (!user || user.isAnonymous)) {
+    return;
+  }
+
   currentUser = user;
 
   if (!user) {
@@ -600,7 +635,6 @@ onAuthStateChanged(auth, async (user) => {
       currentProfile = profile;
       enterApp();
     } else {
-      // An authenticated account without a profile should be completed.
       currentProfile = null;
       openAuth("register");
     }
