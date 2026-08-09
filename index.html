@@ -40,7 +40,7 @@
     </div>
     <div class="balance-ticker">
       <span class="balance-label">Balance</span>
-      <span class="balance-value" id="balanceValue">—</span>
+      <span class="balance-value" id="balanceValue">0</span>
       <span class="balance-unit">coins</span>
     </div>
     <button id="adminUnlockBtn" class="btn-ghost">Admin</button>
@@ -62,13 +62,35 @@
     <!-- DASHBOARD -->
     <section id="view-dashboard" class="view active">
       <div class="view-header">
-        <h2>Dashboard</h2>
-        <p class="view-sub">Your Betlink activity at a glance — virtual coins, demo data.</p>
+        <h2>Betlink</h2>
+        <p class="view-sub">Live football, open prediction challenges and your bets.</p>
       </div>
 
+      <div class="public-fixtures-card">
+        <div class="public-fixtures-head">
+          <div>
+            <h3 class="dash-section-title">Upcoming matches</h3>
+            <p class="view-sub">Browse matches before you decide to play.</p>
+          </div>
+          <button id="publicRefreshFixtures" class="btn-ghost" type="button">Refresh</button>
+        </div>
+        <div id="publicFixturesList" class="public-fixtures-list"></div>
+        <p id="publicFixturesEmpty" class="empty-state hidden">No upcoming fixtures available right now.</p>
+        <p id="publicFixturesError" class="auth-error"></p>
+      </div>
+
+      <div class="public-login-banner" id="publicLoginBanner">
+        <div>
+          <strong>Want to use BL Coins?</strong>
+          <p>Register or login to create bets, match bets and access your wallet.</p>
+        </div>
+        <button id="publicLoginCta" class="slip-btn primary" type="button">Login / Register</button>
+      </div>
+
+      <div id="privateDashboardContent" class="private-only hidden">
       <div class="dash-balance-card">
         <span class="dash-balance-label">Balance</span>
-        <span class="dash-balance-value" id="dashBalance">—</span>
+        <span class="dash-balance-value" id="dashBalance">0</span>
         <span class="dash-balance-unit">BL Coins</span>
       </div>
 
@@ -94,6 +116,7 @@
       <h3 class="dash-section-title">Recent activity</h3>
       <div id="dashActivityList" class="activity-list"></div>
       <p id="dashActivityEmpty" class="empty-state hidden">No activity yet. Post or match a bet to see it here.</p>
+      </div>
     </section>
 
     <!-- OPEN BETS -->
@@ -166,7 +189,7 @@
       <div class="wallet-summary-grid">
         <div class="wallet-card highlight">
           <span class="wallet-card-label">Balance</span>
-          <span class="wallet-card-value" id="walletBalance">—</span>
+          <span class="wallet-card-value" id="walletBalance">0</span>
         </div>
         <div class="wallet-card">
           <span class="wallet-card-label">Total won</span>
@@ -292,6 +315,54 @@
   <footer class="app-footer">
     Football data provided by the <a href="https://www.football-data.org" target="_blank" rel="noopener">Football-Data.org API</a>
   </footer>
+</div>
+
+
+<!-- AUTH MODAL: public browsing, protected coins -->
+<div id="authModal" class="review-overlay hidden">
+  <div class="review-card auth-modal-card">
+    <div class="auth-modal-head">
+      <div>
+        <h3 id="authModalTitle">Login to Betlink</h3>
+        <p id="authModalSubtitle" class="view-sub">Your matches remain public. Login is required for BL Coins.</p>
+      </div>
+      <button id="authCloseBtn" class="btn-ghost" type="button">Close</button>
+    </div>
+
+    <div class="auth-tabs">
+      <button id="authLoginTab" class="auth-tab active" type="button">Login</button>
+      <button id="authRegisterTab" class="auth-tab" type="button">Register</button>
+    </div>
+
+    <form id="loginForm">
+      <label>Email
+        <input id="loginEmail" type="email" autocomplete="email" required placeholder="you@example.com">
+      </label>
+      <label>Password
+        <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Your password">
+      </label>
+      <button class="btn-primary" type="submit">Login</button>
+      <p id="loginError" class="auth-error"></p>
+    </form>
+
+    <form id="registerForm" class="hidden">
+      <label>Your name
+        <input id="registerName" type="text" autocomplete="name" required maxlength="40" placeholder="e.g. Victor">
+      </label>
+      <label>Email
+        <input id="registerEmail" type="email" autocomplete="email" required placeholder="you@example.com">
+      </label>
+      <label>Password
+        <input id="registerPassword" type="password" autocomplete="new-password" minlength="6" required placeholder="At least 6 characters">
+      </label>
+      <label>Confirm password
+        <input id="registerPassword2" type="password" autocomplete="new-password" minlength="6" required placeholder="Repeat password">
+      </label>
+      <button class="btn-primary" type="submit">Create account</button>
+      <p id="registerError" class="auth-error"></p>
+      <p class="auth-note">New accounts receive 1,000 demo BL Coins. No real money.</p>
+    </form>
+  </div>
 </div>
 
 <!-- Confirmation review panel (Section 3) -->

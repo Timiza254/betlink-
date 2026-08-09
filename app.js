@@ -2,7 +2,9 @@ import { firebaseApp, ADMIN_PASSCODE } from "./firebase-config.js";
 import { fetchUpcomingFixtures } from "./sports.js";
 import { clubColor } from "./club-colors.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged
+  getAuth, signInAnonymously, onAuthStateChanged,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  EmailAuthProvider, linkWithCredential, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, setDoc, getDoc, updateDoc, collection,
@@ -67,6 +69,30 @@ const appShell = document.getElementById("appShell");
 const nameForm = document.getElementById("nameForm");
 const nameInput = document.getElementById("nameInput");
 const nameError = document.getElementById("nameError");
+const loginBtn = document.getElementById("loginBtn");
+const registerBtn = document.getElementById("registerBtn");
+const loginForm = document.getElementById("loginForm");
+const registerForm = document.getElementById("registerForm");
+const loginEmail = document.getElementById("loginEmail");
+const loginPassword = document.getElementById("loginPassword");
+const registerName = document.getElementById("registerName");
+const registerEmail = document.getElementById("registerEmail");
+const registerPassword = document.getElementById("registerPassword");
+const registerPassword2 = document.getElementById("registerPassword2");
+const loginError = document.getElementById("loginError");
+const registerError = document.getElementById("registerError");
+const authModal = document.getElementById("authModal");
+const authCloseBtn = document.getElementById("authCloseBtn");
+const authLoginTab = document.getElementById("authLoginTab");
+const authRegisterTab = document.getElementById("authRegisterTab");
+const authModalTitle = document.getElementById("authModalTitle");
+const authModalSubtitle = document.getElementById("authModalSubtitle");
+const publicFixturesList = document.getElementById("publicFixturesList");
+const publicFixturesEmpty = document.getElementById("publicFixturesEmpty");
+const publicFixturesError = document.getElementById("publicFixturesError");
+const publicLoginBanner = document.getElementById("publicLoginBanner");
+const privateDashboardContent = document.getElementById("privateDashboardContent");
+
 
 const balanceValue = document.getElementById("balanceValue");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -126,6 +152,7 @@ async function loadFixtures() {
     fixtures = await fetchUpcomingFixtures();
     if (fixtures.length === 0) {
       matchSelect.innerHTML = `<option value="">No upcoming fixtures found</option>`;
+      renderPublicFixtures();
       return;
     }
     matchSelect.innerHTML = `<option value="">Choose a fixture…</option>` +
@@ -135,6 +162,7 @@ async function loadFixtures() {
           ", " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
         return `<option value="${i}">${when} — ${f.homeTeam} vs ${f.awayTeam}</option>`;
       }).join("");
+    renderPublicFixtures();
   } catch (err) {
     if (err.message === "no-api-key") {
       matchLoadError.textContent = "Live fixtures aren't set up yet — add a free football-data.org API key to sports-config.js, or use the Custom tab for now.";
@@ -142,8 +170,62 @@ async function loadFixtures() {
       matchLoadError.textContent = "Couldn't load fixtures: " + err.message + ". Try the Custom tab for now.";
     }
     matchSelect.innerHTML = `<option value="">Unavailable</option>`;
+    renderPublicFixtures();
   }
 }
+
+function renderPublicFixtures() {
+  if (!publicFixturesList) return;
+  publicFixturesList.innerHTML = "";
+
+  if (!fixtures.length) {
+    publicFixturesEmpty.classList.remove("hidden");
+    return;
+  }
+
+  publicFixturesEmpty.classList.add("hidden");
+
+  fixtures.slice(0, 10).forEach(f => {
+    const card = document.createElement("div");
+    card.className = "public-fixture";
+    const kickoff = new Date(f.kickoff);
+    const dateText = kickoff.toLocaleDateString(undefined, {
+      weekday: "short", month: "short", day: "numeric"
+    });
+    const timeText = kickoff.toLocaleTimeString(undefined, {
+      hour: "2-digit", minute: "2-digit"
+    });
+
+    card.innerHTML = `
+      <div class="public-fixture-time">${dateText} · ${timeText}</div>
+      <div class="public-fixture-teams">
+        <div><span class="fixture-dot home"></span>${escapeHtml(f.homeTeam)}</div>
+        <span class="fixture-vs">VS</span>
+        <div><span class="fixture-dot away"></span>${escapeHtml(f.awayTeam)}</div>
+      </div>
+      <button class="slip-btn primary public-pick-btn" type="button">Pick a side</button>
+    `;
+
+    card.querySelector(".public-pick-btn").addEventListener("click", () => {
+      if (!isRealUser()) {
+        openAuth("login");
+        showToast("Login first to use BL Coins.", "info");
+        return;
+      }
+      setView("create");
+      matchSelect.value = String(fixtures.indexOf(f));
+      matchSelect.dispatchEvent(new Event("change"));
+    });
+
+    publicFixturesList.appendChild(card);
+  });
+}
+
+document.getElementById("publicRefreshFixtures")?.addEventListener("click", async () => {
+  await loadFixtures();
+  renderPublicFixtures();
+});
+
 loadFixtures();
 
 matchSelect.addEventListener("change", () => {
@@ -239,111 +321,152 @@ async function postMatchBet(f, stake) {
   }
 }
 
-// ---------- Anonymous sign-in on load ----------
-signInAnonymously(auth).catch(() => {
-  nameError.textContent = "Couldn't connect. Check your connection and reload.";
-});
-
-// ---------- Profile initialization / legacy migration ----------
-async function ensureUserProfile(user) {
-  if (!user) return null;
-
-  const userRef = doc(db, "users", user.uid);
-
-  return runTransaction(db, async (tx) => {
-    const snap = await tx.get(userRef);
-
-    if (!snap.exists()) return null;
-
-    const data = snap.data();
-
-    // Older Betlink profiles were created before the startingBalanceGranted
-    // marker existed. If such a legacy profile is sitting at 0 coins, repair
-    // it once with the demo starting balance. After this migration the marker
-    // prevents the balance from being reset on later visits.
-    if (data.startingBalanceGranted !== true) {
-      const patch = { startingBalanceGranted: true };
-
-      if (Number(data.balance) === 0) {
-        patch.balance = STARTING_BALANCE;
-        tx.update(userRef, patch);
-        logTransaction(
-          tx,
-          user.uid,
-          "starting_balance",
-          STARTING_BALANCE,
-          "Welcome bonus — demo virtual coins (legacy profile repaired)"
-        );
-        return { ...data, ...patch };
-      }
-
-      tx.update(userRef, patch);
-      return { ...data, ...patch };
-    }
-
-    return data;
-  });
+// ---------- Public-first authentication ----------
+async function startPublicSession() {
+  try {
+    // Anonymous auth lets public users browse Firestore-backed demo data
+    // without granting them access to a coin balance.
+    if (!auth.currentUser) await signInAnonymously(auth);
+  } catch (err) {
+    console.error(err);
+    showPublicMode();
+    publicFixturesError.textContent = "Public mode is available, but live bet data may be unavailable.";
+  }
 }
 
-// ---------- Name form (first-time setup) ----------
-nameForm.addEventListener("submit", async (e) => {
+function openAuth(mode = "login") {
+  authModal.classList.remove("hidden");
+  setAuthMode(mode);
+}
+
+function closeAuth() {
+  authModal.classList.add("hidden");
+  loginError.textContent = "";
+  registerError.textContent = "";
+}
+
+function setAuthMode(mode) {
+  const login = mode === "login";
+  authLoginTab.classList.toggle("active", login);
+  authRegisterTab.classList.toggle("active", !login);
+  loginForm.classList.toggle("hidden", !login);
+  registerForm.classList.toggle("hidden", login);
+  authModalTitle.textContent = login ? "Login to Betlink" : "Create your Betlink account";
+  authModalSubtitle.textContent = login
+    ? "Browse matches publicly. Login to access your BL Coins."
+    : "Register to receive 1,000 demo BL Coins.";
+}
+
+loginBtn.addEventListener("click", () => openAuth("login"));
+registerBtn.addEventListener("click", () => openAuth("register"));
+document.getElementById("publicLoginCta").addEventListener("click", () => openAuth("login"));
+authCloseBtn.addEventListener("click", closeAuth);
+authLoginTab.addEventListener("click", () => setAuthMode("login"));
+authRegisterTab.addEventListener("click", () => setAuthMode("register"));
+
+loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  nameError.textContent = "";
-
-  const name = nameInput.value.trim();
-  if (!name || !currentUser) return;
-
-  const submitBtn = nameForm.querySelector("button[type='submit']");
-  if (submitBtn) submitBtn.disabled = true;
-
+  loginError.textContent = "";
   try {
-    await runTransaction(db, async (tx) => {
-      const userRef = doc(db, "users", currentUser.uid);
-      const existing = await tx.get(userRef);
-
-      // Never overwrite an existing account/balance from the name form.
-      if (existing.exists()) throw new Error("profile-exists");
-
-      tx.set(userRef, {
-        name,
-        balance: STARTING_BALANCE,
-        startingBalanceGranted: true,
-        betsCreated: 0,
-        betsAccepted: 0,
-        wins: 0,
-        losses: 0,
-        createdAt: serverTimestamp()
-      });
-
-      logTransaction(
-        tx,
-        currentUser.uid,
-        "starting_balance",
-        STARTING_BALANCE,
-        "Welcome bonus — demo virtual coins"
-      );
-    });
-
-    currentProfile = {
-      name,
-      balance: STARTING_BALANCE,
-      startingBalanceGranted: true,
-      betsCreated: 0,
-      betsAccepted: 0,
-      wins: 0,
-      losses: 0
-    };
-
-    enterApp();
+    const email = loginEmail.value.trim();
+    const password = loginPassword.value;
+    await signInWithEmailAndPassword(auth, email, password);
+    closeAuth();
+    showToast("Logged in successfully.", "success");
   } catch (err) {
-    nameError.textContent =
-      err.message === "profile-exists"
-        ? "This demo account is already initialized. Reload the page."
-        : "Something went wrong. Try again.";
-  } finally {
-    if (submitBtn) submitBtn.disabled = false;
+    console.error(err);
+    loginError.textContent =
+      err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password"
+        ? "Email or password is incorrect."
+        : "Couldn't log in. Check your details and try again.";
   }
 });
+
+registerForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  registerError.textContent = "";
+
+  const name = registerName.value.trim();
+  const email = registerEmail.value.trim();
+  const password = registerPassword.value;
+  const password2 = registerPassword2.value;
+
+  if (password !== password2) {
+    registerError.textContent = "Passwords do not match.";
+    return;
+  }
+  if (password.length < 6) {
+    registerError.textContent = "Password must be at least 6 characters.";
+    return;
+  }
+
+  try {
+    let userCredential;
+
+    // If the public visitor currently has an anonymous Firebase identity,
+    // upgrade that same identity so an existing demo balance/bets are kept.
+    if (auth.currentUser?.isAnonymous) {
+      const credential = EmailAuthProvider.credential(email, password);
+      userCredential = await linkWithCredential(auth.currentUser, credential);
+    } else {
+      userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    }
+
+    const user = userCredential.user;
+    const userRef = doc(db, "users", user.uid);
+
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists()) {
+        tx.set(userRef, {
+          name,
+          email,
+          balance: STARTING_BALANCE,
+          startingBalanceGranted: true,
+          betsCreated: 0,
+          betsAccepted: 0,
+          wins: 0,
+          losses: 0,
+          createdAt: serverTimestamp()
+        });
+        logTransaction(tx, user.uid, "starting_balance", STARTING_BALANCE, "Welcome bonus — demo virtual coins");
+      } else {
+        tx.update(userRef, { name, email });
+      }
+    });
+
+    currentUser = user;
+    currentProfile = (await getDoc(userRef)).data();
+    closeAuth();
+    enterApp();
+    showToast("Account created. 1,000 BL Coins added.", "success");
+  } catch (err) {
+    console.error(err);
+    if (err.code === "auth/email-already-in-use") {
+      registerError.textContent = "That email is already registered. Please login.";
+    } else if (err.code === "auth/credential-already-in-use") {
+      registerError.textContent = "That email is already linked to another account. Please login.";
+    } else {
+      registerError.textContent = "Couldn't create the account. Check your details and try again.";
+    }
+  }
+});
+
+// Keep the existing name form only as a fallback for legacy deployments.
+nameForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  nameError.textContent = "Please use Register or Login to access Betlink.";
+  openAuth("register");
+});
+
+async function signOutUser() {
+  try {
+    await signOut(auth);
+  } catch (err) {
+    console.error(err);
+  }
+  location.reload();
+}
 
 // ---------- Admin unlock (passcode) ----------
 adminUnlockBtn.addEventListener("click", () => {
@@ -366,14 +489,54 @@ function isAdminUnlocked() {
 // since accounts are tied to the browser (anonymous session).
 logoutBtn.addEventListener("click", () => {
   localStorage.removeItem("betlink_admin");
-  location.reload();
+  signOutUser();
 });
+
+function isRealUser() {
+  return !!currentUser && !currentUser.isAnonymous && !!currentProfile;
+}
+
+function showPublicMode() {
+  authScreen.classList.add("hidden");
+  appShell.classList.remove("hidden");
+
+  balanceValue.textContent = "Login";
+  document.getElementById("balanceUnit").textContent = "to view coins";
+
+  loginBtn.classList.remove("hidden");
+  registerBtn.classList.remove("hidden");
+  logoutBtn.classList.add("hidden");
+  adminUnlockBtn.classList.add("hidden");
+
+  privateDashboardContent.classList.add("hidden");
+  publicLoginBanner.classList.remove("hidden");
+
+  // Hide private tabs but keep public Home/Open bets available.
+  tabBtns.forEach(btn => {
+    if (["create","mine","wallet","profile","admin"].includes(btn.dataset.view)) {
+      btn.classList.add("locked-tab");
+    }
+  });
+
+  renderPublicFixtures();
+}
 
 function enterApp() {
   authScreen.classList.add("hidden");
   appShell.classList.remove("hidden");
+
   balanceValue.textContent = currentProfile ? currentProfile.balance : "—";
-  adminTabBtn.classList.toggle("hidden", !isAdminUnlocked());
+  document.getElementById("balanceUnit").textContent = "coins";
+
+  loginBtn.classList.add("hidden");
+  registerBtn.classList.add("hidden");
+  logoutBtn.classList.remove("hidden");
+  adminUnlockBtn.classList.toggle("hidden", !isAdminUnlocked());
+
+  privateDashboardContent.classList.remove("hidden");
+  publicLoginBanner.classList.add("hidden");
+
+  tabBtns.forEach(btn => btn.classList.remove("locked-tab"));
   subscribeAll();
 }
 
@@ -383,31 +546,32 @@ onAuthStateChanged(auth, async (user) => {
 
   if (!user) {
     currentProfile = null;
-    appShell.classList.add("hidden");
-    authScreen.classList.remove("hidden");
-    if (unsubOpen) unsubOpen();
-    if (unsubMine) unsubMine();
-    if (unsubAdmin) unsubAdmin();
+    showPublicMode();
+    startPublicSession();
+    return;
+  }
+
+  // Anonymous visitors can browse without seeing a balance.
+  if (user.isAnonymous) {
+    currentProfile = null;
+    showPublicMode();
     return;
   }
 
   try {
-    // Load the existing profile and repair a legacy 0-coin profile once.
     const profile = await ensureUserProfile(user);
-
     if (profile) {
       currentProfile = profile;
       enterApp();
     } else {
-      // First time on this device — show name entry.
+      // An authenticated account without a profile should be completed.
       currentProfile = null;
-      authScreen.classList.remove("hidden");
-      appShell.classList.add("hidden");
+      openAuth("register");
     }
   } catch (err) {
     console.error("Betlink profile load failed:", err);
-    nameError.textContent =
-      "Couldn't load your demo account. Check Firebase/Firestore and reload.";
+    showToast("Couldn't load your account. Try again.", "error");
+    showPublicMode();
   }
 });
 
@@ -469,7 +633,15 @@ function setView(name) {
   tabBtns.forEach(b => b.classList.toggle("active", b.dataset.view === name));
   views.forEach(v => v.classList.toggle("active", v.id === `view-${name}`));
 }
-tabBtns.forEach(btn => btn.addEventListener("click", () => setView(btn.dataset.view)));
+tabBtns.forEach(btn => btn.addEventListener("click", () => {
+  const view = btn.dataset.view;
+  if (["create","mine","wallet","profile","admin"].includes(view) && !isRealUser()) {
+    openAuth("login");
+    showToast("Login or register to access BL Coins and betting tools.", "info");
+    return;
+  }
+  setView(view);
+}));
 document.querySelectorAll("[data-view].link-btn").forEach(btn => {
   btn.addEventListener("click", () => setView(btn.dataset.view));
 });
