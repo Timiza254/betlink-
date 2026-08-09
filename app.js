@@ -93,6 +93,24 @@ const privateDashboardContent = document.getElementById("privateDashboardContent
 
 
 const balanceValue = document.getElementById("balanceValue");
+
+// ---------- Top balance Login button ----------
+balanceValue?.addEventListener("click", () => {
+  if (!isRealUser()) {
+    openAuth("login");
+  }
+});
+balanceValue?.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && !isRealUser()) {
+    e.preventDefault();
+    openAuth("login");
+  }
+});
+if (balanceValue) {
+  balanceValue.style.cursor = "pointer";
+  balanceValue.setAttribute("role", "button");
+  balanceValue.setAttribute("tabindex", "0");
+}
 const balanceUnit = document.getElementById("balanceUnit");
 const logoutBtn = document.getElementById("logoutBtn");
 const adminTabBtn = document.getElementById("adminTabBtn");
