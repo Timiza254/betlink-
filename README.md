@@ -1,96 +1,111 @@
-# Betlink (test build — virtual coins only)
+# BETLINK V2 — Upgrade Report
 
-A peer-to-peer bet-matching app. Betlink never holds a position itself — one user
-writes the terms and stake, another matches it, and you (the admin) settle who won.
-Right now everything runs on virtual coins, so there's no money-handling or licensing
-question to solve yet.
+Upgraded in place from the existing project at `timiza254.github.io/betlink-`.
+Nothing was rebuilt from scratch — the existing auth flow, live-fixture
+picker, club colors, and admin resolve logic are all still there; this pass
+adds a dashboard, wallet, profile, tabbed My Bets, marketplace search/sort,
+a confirmation step before posting, toast notifications, and an admin
+cancel/refund action with an activity log.
 
-## How it works
+## Files changed
 
-1. Open the link — no login, just type your name once. It starts you with 1,000 virtual coins.
-2. They write a slip: pick a live match and a side (or write custom terms), set a stake.
-3. Someone else matches it — both stakes get locked.
-4. Once the deadline's passed, you (admin) mark yes/no in the Admin tab.
-5. The winner gets both stakes automatically.
+- `index.html` — added Dashboard, Wallet, Profile views; tabs on My Bets;
+  search/sort controls on Open Bets; confirmation modal; toast host;
+  expanded bottom nav (now scrollable).
+- `app.js` — transaction logging, user stat counters (wins/losses/created/
+  accepted), toast system, review-before-posting flow, admin cancel +
+  activity log, search/sort/filter logic, all new view rendering.
+- `style.css` — styling for every new component above.
+- `README.md` — this report.
 
-**Admin access:** tap the **Admin** button in the top bar and enter your passcode
-(set in `firebase-config.js` under `ADMIN_PASSCODE`). This unlocks the Admin tab
-on that device until you clear browser data or log out.
+No changes were needed to `firebase-config.js`, `sports.js`,
+`sports-config.js`, or `club-colors.js` — those are untouched.
 
-**Note on this identity model:** since there's no login, each person's account is
-tied to their browser (an anonymous Firebase session). Clearing browser data,
-using a different browser, or switching devices starts a fresh account. Fine for
-testing; worth adding real accounts back before a public launch so people don't
-lose their balance.
+## What works right now
 
-## Live match betting
+- **Dashboard**: real balance, real open/active/won/lost counts, last 5
+  transactions — all pulled live from Firestore, not placeholder numbers.
+- **Create Bet**: validates stake > 0, stake <= balance, required fields;
+  shows a Potential Return preview; requires a Confirm-before-posting step.
+- **Marketplace (Open Bets)**: sport filter, text search, sort by newest,
+  closing soon, lowest stake, or highest stake.
+- **Accept Bet**: blocks accepting your own bet, blocks insufficient
+  balance, re-validates inside the same atomic transaction.
+- **My Bets**: tabs for All / Open / Active / Won / Lost / Cancelled.
+- **Wallet**: balance, total won, total lost, total staked, full
+  transaction history, all computed from real logged transactions.
+- **Profile**: name, join date, bets created/accepted, wins, losses, win %.
+- **Admin**: resolve matched bets (yes/no on the pick), cancel any open or
+  matched bet with automatic stake refund, every admin action written to
+  an `adminLog` collection.
+- **Toasts** for bet posted / matched / resolved / cancelled / errors.
+- **Empty states** on every list-based view.
 
-The **Create bet → Live match** tab pulls real, upcoming Premier League
-fixtures. You pick a match and pick a side ("Arsenal to win"); whoever
-matches your slip is effectively betting against that exact claim. At
-resolution time you just confirm yes/no — did the picked outcome happen.
+## What's demo-only (by design, per your brief)
 
-The **Custom** tab still exists for any bet that isn't a straightforward
-match result (props, combos, non-football, etc.) — same free-text flow as
-before.
+- **Money is virtual.** No deposits, withdrawals, or M-Pesa — just a
+  starting balance of 1,000 BL Coins.
+- **"Users" are anonymous browser sessions**, not real accounts. Clearing
+  browser data or switching devices starts a fresh identity. There's no
+  password anywhere, so nothing password-related needed hashing.
+- **Odds are a fixed 1:1 payout** (stake x 2 to the winner) — not a real
+  odds/pricing engine. Building actual variable odds is a separate, fairly
+  large feature (see "What I'd build next").
+- **Admin access is a shared local passcode**, not per-person admin
+  accounts with real authentication.
 
-### Setting up live fixtures (optional, ~2 minutes)
+## What still requires a real backend before this is more than a demo
 
-1. Get a free API key at https://www.football-data.org/client/register
-2. Open `sports-config.js` and paste your key into `FOOTBALL_DATA_TOKEN`.
-3. That's it — the free tier covers the Premier League (`PL`) and a few
-   other top leagues; change `COMPETITION_CODE` if you want a different one.
+This is a static site talking directly to Firestore from the browser —
+there is no application server. That means, honestly:
 
-If you skip this, the Live match tab will show a message pointing people
-to the Custom tab instead — nothing breaks.
+- **Nothing here is safe against a motivated user editing requests in
+  their own browser.** Firestore transactions stop lost updates between
+  simultaneous users, but they don't stop someone from tampering with
+  their own client. Real balance/payout logic needs to live behind a
+  server (Cloud Functions or a proper API) that the browser can't bypass.
+- **Firestore is still in "test mode"** (open read/write rules) from
+  earlier setup — this needs locked-down security rules at minimum, and
+  ideally all writes routed through a trusted backend, before this touches
+  anything beyond play money.
+- **The football-data.org API key is visible in the page source**, and
+  fixture requests are routed through a public CORS proxy (documented in
+  `sports.js`) because the API doesn't allow direct browser calls. Both
+  of those are fine for a free-tier demo key, not for a production key or
+  a paid data source.
+- **No real authentication** — no password, no email verification, no
+  account recovery.
 
-**Note on the key being public:** since GitHub Pages only serves static
-files, this key is visible to anyone who views your page source. That's a
-low-stakes exposure for a free-tier key (rate-limit abuse at worst) — just
-don't drop a paid-tier key into this same spot later without moving fixture
-fetching behind a small server first.
+## What I'd build next, in order
 
-## One-time setup (about 10 minutes)
+1. A real backend (even a small one) that owns balance changes and bet
+   settlement, with the frontend only ever requesting actions, never
+   computing balances itself.
+2. Real accounts (email/password or OAuth) so a balance survives
+   clearing browser data.
+3. Locked-down Firestore security rules matched to whatever the
+   backend actually needs the client to read directly.
+4. A real odds/payout model if you want stakes to be asymmetric
+   instead of a flat 1:1 split.
+5. Everything under "Future modules" in your brief (KYC, payments,
+   responsible-gambling controls, audit logs, fraud checks) — all of that
+   is a legal/compliance project in its own right and shouldn't be
+   attempted piecemeal.
 
-You need a free Firebase project — it handles logins and stores the data, no server
-for you to run.
+## One heads-up on deploying this
 
-1. Go to https://console.firebase.google.com → **Add project** → name it (e.g. `betlink`).
-2. In the project, go to **Build → Authentication → Get started** → enable
-   **Anonymous** as a sign-in method (under "Native providers" or "Additional providers").
-3. Go to **Build → Firestore Database → Create database** → start in **test mode**
-   for now (we'll lock it down before you launch publicly).
-4. Go to **Project settings** (gear icon) → scroll to **Your apps** → click the
-   **</>** (web) icon → register the app (any nickname) → it'll show you a
-   `firebaseConfig` object.
-5. Open `firebase-config.js` in this project and paste your values in — replace
-   every `"YOUR_..."` placeholder.
-6. In the same file, set `ADMIN_PASSCODE` to whatever passcode you want to use
-   to unlock the Admin tab on your device.
+Two of the new queries in app.js filter and sort in the same request.
+Firestore sometimes needs a one-time "composite index" for that combo — if
+a list ever looks stuck on "Loading...", check your browser's console for a
+Firestore error with a Create index link, or open Firebase Console ->
+Firestore -> Indexes and add one for whatever field pair it names. I
+avoided this for the Admin view by sorting in JavaScript instead, but the
+Open Bets and Wallet queries still combine a filter with a sort — they
+matched a pattern that's historically worked fine in this app, but flagging
+it in case Firestore's rules ever change.
 
-## Deploying to GitHub Pages
+## Deploying
 
-1. Push all these files (`index.html`, `style.css`, `app.js`,
-   `firebase-config.js`, `sports.js`, `sports-config.js`, `club-colors.js`)
-   to the root of your repo — same level, no subfolder.
-2. In repo Settings → Pages, confirm source is `main` branch, `/ (root)`.
-3. Visit `https://<yourusername>.github.io/<repo-name>/` (case-sensitive).
-
-## Before you'd ever use real money or go public
-
-Two things worth doing ahead of that, not now:
-
-- **Firestore security rules** — test mode leaves your database wide open. Before
-  any real users touch this, rules need to restrict writes (e.g. a user can only
-  edit their own balance via the transaction logic, not directly).
-- **Legal/licensing check** — even as a "third party" matching two bettors rather
-  than taking the position yourself, moving real money between users for wagers
-  typically requires a gambling or money-transmission license depending on your
-  country. Worth a proper look before this becomes real-money.
-
-## What's not built yet (ideas for next passes)
-
-- Password reset flow
-- Editing/cancelling an open bet before it's matched
-- Push notifications when your bet gets matched or resolved
-- Dispute flow (right now the admin's ruling is final)
+Push all files (index.html, style.css, app.js, firebase-config.js,
+sports.js, sports-config.js, club-colors.js) to the root of your repo,
+same as before — GitHub will overwrite the ones that already exist.

@@ -6,13 +6,55 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, doc, setDoc, getDoc, updateDoc, collection,
-  addDoc, onSnapshot, query, where, orderBy, serverTimestamp, runTransaction
+  addDoc, onSnapshot, query, where, orderBy, serverTimestamp, runTransaction,
+  increment, limit
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 
 const STARTING_BALANCE = 1000;
+
+// ============================================================
+// DATA LAYER
+// This app is a static-hosting demo prototype (GitHub Pages + Firebase
+// client SDK) — there is no application server. Every "transaction" below
+// runs as a Firestore client-side transaction, which prevents lost-update
+// races but does NOT prevent a technically-savvy user from tampering with
+// their own browser's requests. In a production system, all balance
+// changes, bet settlement, and admin actions MUST be re-validated by a
+// trusted backend (e.g. Cloud Functions or a real API server) that the
+// client cannot bypass — Firestore security rules alone are the minimum
+// bar, and this demo currently runs in permissive "test mode" rules.
+// None of this is a concern for a virtual-coin prototype; it matters a
+// lot before any real value is ever attached to these balances.
+// ============================================================
+
+// Records a coin movement so it shows up in the Wallet's transaction
+// history. Called from inside the same Firestore transaction as the
+// balance change it describes, so the two can never drift apart.
+function logTransaction(tx, uid, type, amount, description, betId = null) {
+  const txRef = doc(collection(db, "transactions"));
+  tx.set(txRef, {
+    uid, type, amount, description,
+    betId, createdAt: serverTimestamp()
+  });
+}
+
+// Simple toast notification system (Section 14).
+function showToast(message, kind = "info") {
+  const host = document.getElementById("toastHost");
+  if (!host) return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${kind}`;
+  el.textContent = message;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, 3200);
+}
 
 let currentUser = null;   // Firebase auth user
 let currentProfile = null; // Firestore user doc { name, balance, isAdmin }
@@ -41,6 +83,15 @@ let currentSportFilter = "all";
 let latestOpenBets = []; // [{id, data}]
 const myBetsList = document.getElementById("myBetsList");
 const myBetsEmpty = document.getElementById("myBetsEmpty");
+const myBetsTabs = document.querySelectorAll(".my-bets-tab");
+let currentMyBetsFilter = "all";
+let latestMyBets = []; // [{id, data}]
+
+const betSearchInput = document.getElementById("betSearch");
+const betSortSelect = document.getElementById("betSort");
+let searchQuery = "";
+let sortMode = "newest";
+
 const adminBetsList = document.getElementById("adminBetsList");
 const adminBetsEmpty = document.getElementById("adminBetsEmpty");
 
@@ -122,31 +173,39 @@ matchSelect.addEventListener("change", () => {
 });
 
 // ---------- Create bet: live match mode ----------
-matchBetForm.addEventListener("submit", async (e) => {
+matchBetForm.addEventListener("submit", (e) => {
   e.preventDefault();
   matchBetError.textContent = "";
   const f = fixtures[matchSelect.value];
   const stake = parseInt(matchStakeInput.value, 10);
 
-  if (!f || !selectedPick) {
-    matchBetError.textContent = "Pick a fixture and a side first.";
-    return;
-  }
-  if (!currentProfile || stake > currentProfile.balance) {
-    matchBetError.textContent = "You don't have enough coins for that stake.";
-    return;
-  }
+  if (!f || !selectedPick) { matchBetError.textContent = "Pick a fixture and a side first."; return; }
+  if (!Number.isFinite(stake) || stake <= 0) { matchBetError.textContent = "Stake must be a positive number."; return; }
+  if (!currentProfile || stake > currentProfile.balance) { matchBetError.textContent = "You don't have enough coins for that stake."; return; }
 
+  showReview({
+    lines: [
+      ["Sport", "Football"],
+      ["Match", `${f.homeTeam} vs ${f.awayTeam}`],
+      ["Prediction", selectedPick.label],
+      ["Stake", `${stake} coins`],
+      ["Potential return", `${stake * 2} coins`],
+      ["Closes", new Date(f.kickoff).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })]
+    ],
+    onConfirm: () => postMatchBet(f, stake)
+  });
+});
+
+async function postMatchBet(f, stake) {
   const terms = `${f.homeTeam} vs ${f.awayTeam} — backing: ${selectedPick.label}`;
   const deadline = new Date(f.kickoff).toISOString().slice(0, 10);
-
   try {
     await runTransaction(db, async (tx) => {
       const userRef = doc(db, "users", currentUser.uid);
       const userSnap = await tx.get(userRef);
       const bal = userSnap.data().balance;
       if (stake > bal) throw new Error("insufficient");
-      tx.update(userRef, { balance: bal - stake });
+      tx.update(userRef, { balance: bal - stake, betsCreated: increment(1) });
       const betRef = doc(collection(db, "bets"));
       tx.set(betRef, {
         terms, stake, deadline,
@@ -167,14 +226,18 @@ matchBetForm.addEventListener("submit", async (e) => {
         winnerId: null,
         createdAt: serverTimestamp()
       });
+      logTransaction(tx, currentUser.uid, "bet_created", -stake, `Stake locked: ${terms.slice(0, 60)}`, betRef.id);
     });
     matchBetForm.reset();
     matchPickWrap.classList.add("hidden");
+    closeReview();
+    showToast("Slip posted — waiting for someone to match it.", "success");
     setView("mine");
   } catch (err) {
     matchBetError.textContent = "Couldn't post the slip. Try again.";
+    closeReview();
   }
-});
+}
 
 // ---------- Anonymous sign-in on load ----------
 signInAnonymously(auth).catch(() => {
@@ -188,12 +251,20 @@ nameForm.addEventListener("submit", async (e) => {
   const name = nameInput.value.trim();
   if (!name) return;
   try {
-    await setDoc(doc(db, "users", currentUser.uid), {
-      name,
-      balance: STARTING_BALANCE,
-      createdAt: serverTimestamp()
+    await runTransaction(db, async (tx) => {
+      const userRef = doc(db, "users", currentUser.uid);
+      tx.set(userRef, {
+        name,
+        balance: STARTING_BALANCE,
+        betsCreated: 0,
+        betsAccepted: 0,
+        wins: 0,
+        losses: 0,
+        createdAt: serverTimestamp()
+      });
+      logTransaction(tx, currentUser.uid, "starting_balance", STARTING_BALANCE, "Welcome bonus — demo virtual coins");
     });
-    currentProfile = { name, balance: STARTING_BALANCE };
+    currentProfile = { name, balance: STARTING_BALANCE, betsCreated: 0, betsAccepted: 0, wins: 0, losses: 0 };
     enterApp();
   } catch (err) {
     nameError.textContent = "Something went wrong. Try again.";
@@ -270,10 +341,38 @@ document.querySelectorAll(".sport-filter.soon").forEach(btn => {
   });
 });
 
+betSearchInput.addEventListener("input", () => {
+  searchQuery = betSearchInput.value.trim().toLowerCase();
+  renderOpenBets();
+});
+betSortSelect.addEventListener("change", () => {
+  sortMode = betSortSelect.value;
+  renderOpenBets();
+});
+
 function renderOpenBets() {
-  const filtered = currentSportFilter === "all"
+  let filtered = currentSportFilter === "all"
     ? latestOpenBets
     : latestOpenBets.filter(({ data }) => data.sport === currentSportFilter);
+
+  if (searchQuery) {
+    filtered = filtered.filter(({ data }) => {
+      const haystack = [data.terms, data.homeTeam, data.awayTeam, data.creatorName].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(searchQuery);
+    });
+  }
+
+  filtered = [...filtered].sort((a, b) => {
+    if (sortMode === "lowest") return a.data.stake - b.data.stake;
+    if (sortMode === "highest") return b.data.stake - a.data.stake;
+    if (sortMode === "closing") {
+      const da = a.data.kickoff || a.data.deadline || "";
+      const db_ = b.data.kickoff || b.data.deadline || "";
+      return String(da).localeCompare(String(db_));
+    }
+    return 0; // "newest" — latestOpenBets already arrives ordered by createdAt desc
+  });
+
   openBetsList.innerHTML = "";
   openBetsEmpty.classList.toggle("hidden", filtered.length !== 0);
   filtered.forEach(({ id, data }) => openBetsList.appendChild(slipCard(data, id, { mode: "open" })));
@@ -289,8 +388,19 @@ document.querySelectorAll("[data-view].link-btn").forEach(btn => {
   btn.addEventListener("click", () => setView(btn.dataset.view));
 });
 
+matchStakeInput.addEventListener("input", () => {
+  const s = parseInt(matchStakeInput.value, 10);
+  const el = document.getElementById("matchPotentialReturn");
+  el.textContent = Number.isFinite(s) && s > 0 ? `Potential return: ${s * 2} coins` : "";
+});
+document.getElementById("betStake").addEventListener("input", () => {
+  const s = parseInt(document.getElementById("betStake").value, 10);
+  const el = document.getElementById("customPotentialReturn");
+  el.textContent = Number.isFinite(s) && s > 0 ? `Potential return: ${s * 2} coins` : "";
+});
+
 // ---------- Create bet ----------
-createBetForm.addEventListener("submit", async (e) => {
+createBetForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const errEl = document.getElementById("createBetError");
   errEl.textContent = "";
@@ -298,18 +408,31 @@ createBetForm.addEventListener("submit", async (e) => {
   const stake = parseInt(document.getElementById("betStake").value, 10);
   const deadline = document.getElementById("betDeadline").value;
 
-  if (!currentProfile || stake > currentProfile.balance) {
-    errEl.textContent = "You don't have enough coins for that stake.";
-    return;
-  }
+  if (!terms) { errEl.textContent = "Describe the bet first."; return; }
+  if (!Number.isFinite(stake) || stake <= 0) { errEl.textContent = "Stake must be a positive number."; return; }
+  if (!deadline) { errEl.textContent = "Pick a resolve-by date."; return; }
+  if (!currentProfile || stake > currentProfile.balance) { errEl.textContent = "You don't have enough coins for that stake."; return; }
 
+  showReview({
+    lines: [
+      ["Terms", terms],
+      ["Stake", `${stake} coins`],
+      ["Potential return", `${stake * 2} coins`],
+      ["Resolves by", deadline]
+    ],
+    onConfirm: () => postCustomBet(terms, stake, deadline)
+  });
+});
+
+async function postCustomBet(terms, stake, deadline) {
+  const errEl = document.getElementById("createBetError");
   try {
     await runTransaction(db, async (tx) => {
       const userRef = doc(db, "users", currentUser.uid);
       const userSnap = await tx.get(userRef);
       const bal = userSnap.data().balance;
       if (stake > bal) throw new Error("insufficient");
-      tx.update(userRef, { balance: bal - stake });
+      tx.update(userRef, { balance: bal - stake, betsCreated: increment(1) });
       const betRef = doc(collection(db, "bets"));
       tx.set(betRef, {
         terms, stake, deadline,
@@ -322,13 +445,33 @@ createBetForm.addEventListener("submit", async (e) => {
         winnerId: null,
         createdAt: serverTimestamp()
       });
+      logTransaction(tx, currentUser.uid, "bet_created", -stake, `Stake locked: ${terms.slice(0, 60)}`, betRef.id);
     });
     createBetForm.reset();
+    closeReview();
+    showToast("Slip posted — waiting for someone to match it.", "success");
     setView("mine");
   } catch (err) {
     errEl.textContent = "Couldn't post the slip. Try again.";
+    closeReview();
   }
-});
+}
+
+// ---------- Confirmation review panel (Section 3) ----------
+function showReview({ lines, onConfirm }) {
+  const panel = document.getElementById("reviewPanel");
+  const body = document.getElementById("reviewBody");
+  body.innerHTML = lines.map(([k, v]) => `<div class="review-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v))}</strong></div>`).join("");
+  panel.classList.remove("hidden");
+  const confirmBtn = document.getElementById("reviewConfirmBtn");
+  const newBtn = confirmBtn.cloneNode(true); // clear any previous handler
+  confirmBtn.replaceWith(newBtn);
+  newBtn.addEventListener("click", onConfirm);
+}
+function closeReview() {
+  document.getElementById("reviewPanel").classList.add("hidden");
+}
+document.getElementById("reviewCancelBtn").addEventListener("click", closeReview);
 
 // ---------- Match (accept) a bet ----------
 async function acceptBet(betId, stake) {
@@ -341,17 +484,19 @@ async function acceptBet(betId, stake) {
       const bet = betSnap.data();
       const bal = userSnap.data().balance;
       if (bet.status !== "open") throw new Error("already matched");
-      if (bet.creatorId === currentUser.uid) throw new Error("own bet");
+      if (bet.creatorId === currentUser.uid) throw new Error("own bet"); // Section 3/12: can't accept your own slip
       if (stake > bal) throw new Error("insufficient");
-      tx.update(userRef, { balance: bal - stake });
+      tx.update(userRef, { balance: bal - stake, betsAccepted: increment(1) });
       tx.update(betRef, {
         status: "matched",
         matcherId: currentUser.uid,
         matcherName: currentProfile.name
       });
+      logTransaction(tx, currentUser.uid, "bet_accepted", -stake, `Matched: ${(bet.terms || "").slice(0, 60)}`, betId);
     });
+    showToast("Bet matched! Moved to your Active bets.", "success");
   } catch (err) {
-    alert("Couldn't match that slip — it may already be taken, or you don't have enough coins.");
+    showToast("Couldn't match that slip — it may already be taken, or you don't have enough coins.", "error");
   }
 }
 
@@ -363,16 +508,61 @@ async function resolveBet(betId, winnerId) {
       const betSnap = await tx.get(betRef);
       const bet = betSnap.data();
       if (bet.status !== "matched") throw new Error("not matched");
+      const loserId = winnerId === bet.creatorId ? bet.matcherId : bet.creatorId;
       const winnerRef = doc(db, "users", winnerId);
+      const loserRef = doc(db, "users", loserId);
       const winnerSnap = await tx.get(winnerRef);
       const winnerBal = winnerSnap.data().balance;
       const payout = bet.stake * 2;
-      tx.update(winnerRef, { balance: winnerBal + payout });
-      tx.update(betRef, { status: "resolved", winnerId });
+      tx.update(winnerRef, { balance: winnerBal + payout, wins: increment(1) });
+      tx.update(loserRef, { losses: increment(1) });
+      tx.update(betRef, { status: "resolved", winnerId, resolvedAt: serverTimestamp() });
+      logTransaction(tx, winnerId, "bet_won", payout, `Won: ${(bet.terms || "").slice(0, 60)}`, betId);
+      logTransaction(tx, loserId, "bet_lost", -bet.stake, `Lost: ${(bet.terms || "").slice(0, 60)}`, betId);
+      logAdminAction(tx, "resolve", betId, `Settled — winner: ${winnerId === bet.creatorId ? bet.creatorName : bet.matcherName}`);
     });
+    showToast("Bet resolved and paid out.", "success");
   } catch (err) {
-    alert("Couldn't resolve that bet. Try again.");
+    showToast("Couldn't resolve that bet. Try again.", "error");
   }
+}
+
+// ---------- Admin: cancel a bet (refunds any locked stakes) ----------
+async function cancelBet(betId) {
+  if (!confirm("Cancel this bet and refund stakes? This can't be undone.")) return;
+  try {
+    await runTransaction(db, async (tx) => {
+      const betRef = doc(db, "bets", betId);
+      const betSnap = await tx.get(betRef);
+      const bet = betSnap.data();
+      if (bet.status !== "open" && bet.status !== "matched") throw new Error("not cancellable");
+
+      const creatorRef = doc(db, "users", bet.creatorId);
+      const creatorSnap = await tx.get(creatorRef);
+      tx.update(creatorRef, { balance: creatorSnap.data().balance + bet.stake });
+      logTransaction(tx, bet.creatorId, "bet_cancelled", bet.stake, `Refund: ${(bet.terms || "").slice(0, 60)}`, betId);
+
+      if (bet.status === "matched" && bet.matcherId) {
+        const matcherRef = doc(db, "users", bet.matcherId);
+        const matcherSnap = await tx.get(matcherRef);
+        tx.update(matcherRef, { balance: matcherSnap.data().balance + bet.stake });
+        logTransaction(tx, bet.matcherId, "bet_cancelled", bet.stake, `Refund: ${(bet.terms || "").slice(0, 60)}`, betId);
+      }
+
+      tx.update(betRef, { status: "cancelled", cancelledAt: serverTimestamp() });
+      logAdminAction(tx, "cancel", betId, "Cancelled — stakes refunded");
+    });
+    showToast("Bet cancelled and stakes refunded.", "success");
+  } catch (err) {
+    showToast("Couldn't cancel that bet.", "error");
+  }
+}
+
+// Writes to a demo admin activity log (Section 9). In production this
+// should also capture a verified admin identity, not just a local passcode.
+function logAdminAction(tx, action, betId, note) {
+  const ref = doc(collection(db, "adminLog"));
+  tx.set(ref, { action, betId, note, actorUid: currentUser.uid, at: serverTimestamp() });
 }
 
 // ---------- Rendering ----------
@@ -386,6 +576,7 @@ function slipCard(bet, id, opts = {}) {
 
   let stampHtml = "";
   if (bet.status === "matched") stampHtml = `<div class="stamp matched">Matched</div>`;
+  if (bet.status === "cancelled") stampHtml = `<div class="stamp lost">Cancelled</div>`;
   if (bet.status === "resolved") {
     const won = bet.winnerId === currentUser?.uid;
     if (opts.showResultStamp) {
@@ -436,7 +627,7 @@ function slipCard(bet, id, opts = {}) {
     const wrap = document.createElement("div");
     wrap.className = "admin-choice";
 
-    if (bet.betType === "match") {
+    if (bet.status === "matched" && bet.betType === "match") {
       const q = document.createElement("p");
       q.className = "resolve-question";
       q.textContent = `Did this happen: "${bet.pickLabel}"?`;
@@ -453,7 +644,7 @@ function slipCard(bet, id, opts = {}) {
       btnNo.addEventListener("click", () => resolveBet(id, bet.matcherId));
 
       wrap.append(btnYes, btnNo);
-    } else {
+    } else if (bet.status === "matched") {
       const btnA = document.createElement("button");
       btnA.className = "slip-btn primary";
       btnA.textContent = `${bet.creatorName} wins`;
@@ -463,7 +654,18 @@ function slipCard(bet, id, opts = {}) {
       btnB.textContent = `${bet.matcherName} wins`;
       btnB.addEventListener("click", () => resolveBet(id, bet.matcherId));
       wrap.append(btnA, btnB);
+    } else {
+      const note = document.createElement("p");
+      note.className = "resolve-question";
+      note.textContent = "Open — not yet matched.";
+      div.querySelector("[data-actions]").before(note);
     }
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "slip-btn danger";
+    cancelBtn.textContent = "Cancel & refund";
+    cancelBtn.addEventListener("click", () => cancelBet(id));
+    wrap.appendChild(cancelBtn);
 
     actions.appendChild(wrap);
   }
@@ -475,6 +677,122 @@ function escapeHtml(str) {
   const d = document.createElement("div");
   d.textContent = str;
   return d.innerHTML;
+}
+
+// ---------- My Bets tab filtering ----------
+myBetsTabs.forEach(tab => {
+  tab.addEventListener("click", () => {
+    myBetsTabs.forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    currentMyBetsFilter = tab.dataset.status;
+    renderMyBets();
+  });
+});
+
+function displayStatusFor(bet) {
+  if (bet.status === "open") return "open";
+  if (bet.status === "matched") return "matched";
+  if (bet.status === "cancelled") return "cancelled";
+  if (bet.status === "resolved") return bet.winnerId === currentUser?.uid ? "won" : "lost";
+  return "";
+}
+
+function renderMyBets() {
+  const filtered = currentMyBetsFilter === "all"
+    ? latestMyBets
+    : latestMyBets.filter(({ data }) => displayStatusFor(data) === currentMyBetsFilter);
+  myBetsList.innerHTML = "";
+  myBetsEmpty.classList.toggle("hidden", filtered.length !== 0);
+  filtered.forEach(({ id, data }) => myBetsList.appendChild(slipCard(data, id, { mode: "mine", showResultStamp: true })));
+  updateDashboardStats();
+}
+
+function updateDashboardStats() {
+  const counts = { open: 0, matched: 0, won: 0, lost: 0 };
+  latestMyBets.forEach(({ data }) => {
+    const s = displayStatusFor(data);
+    if (s === "open") counts.open++;
+    else if (s === "matched") counts.matched++;
+    else if (s === "won") counts.won++;
+    else if (s === "lost") counts.lost++;
+  });
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText("statOpen", counts.open);
+  setText("statActive", counts.matched);
+  setText("statWon", counts.won);
+  setText("statLost", counts.lost);
+}
+
+// ---------- Transactions (Wallet + Dashboard recent activity) ----------
+const TX_LABELS = {
+  starting_balance: "Welcome bonus",
+  bet_created: "Bet created",
+  bet_accepted: "Bet accepted",
+  bet_won: "Bet won",
+  bet_lost: "Bet lost",
+  bet_cancelled: "Bet cancelled — refunded",
+  admin_adjustment: "Admin adjustment"
+};
+
+function renderTransactions(txs) {
+  // Dashboard: most recent 5
+  const dashList = document.getElementById("dashActivityList");
+  const dashEmpty = document.getElementById("dashActivityEmpty");
+  if (dashList) {
+    dashList.innerHTML = "";
+    dashEmpty.classList.toggle("hidden", txs.length !== 0);
+    txs.slice(0, 5).forEach(t => dashList.appendChild(activityRow(t)));
+  }
+
+  // Wallet: full list + totals
+  const walletList = document.getElementById("walletTxList");
+  const walletEmpty = document.getElementById("walletTxEmpty");
+  if (walletList) {
+    walletList.innerHTML = "";
+    walletEmpty.classList.toggle("hidden", txs.length !== 0);
+    txs.forEach(t => walletList.appendChild(activityRow(t)));
+  }
+
+  const totalWon = txs.filter(t => t.type === "bet_won").reduce((sum, t) => sum + t.amount, 0);
+  const totalLost = txs.filter(t => t.type === "bet_lost").reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const totalStaked = txs.filter(t => t.type === "bet_created" || t.type === "bet_accepted").reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText("walletWon", totalWon);
+  setText("walletLost", totalLost);
+  setText("walletStaked", totalStaked);
+}
+
+function activityRow(t) {
+  const row = document.createElement("div");
+  row.className = "activity-row";
+  const sign = t.amount > 0 ? "+" : t.amount < 0 ? "" : "";
+  const amountClass = t.amount > 0 ? "positive" : t.amount < 0 ? "negative" : "";
+  const when = t.createdAt?.toDate ? t.createdAt.toDate().toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  row.innerHTML = `
+    <div>
+      <p class="activity-label">${escapeHtml(TX_LABELS[t.type] || t.type)}</p>
+      <p class="activity-desc">${escapeHtml(t.description || "")}</p>
+      <p class="activity-when">${when}</p>
+    </div>
+    <span class="activity-amount ${amountClass}">${sign}${t.amount} coins</span>
+  `;
+  return row;
+}
+
+// ---------- Profile ----------
+function renderProfile() {
+  if (!currentProfile) return;
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText("profileName", currentProfile.name || "—");
+  setText("profileAvatar", (currentProfile.name || "?").charAt(0).toUpperCase());
+  const joined = currentProfile.createdAt?.toDate ? currentProfile.createdAt.toDate().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "—";
+  setText("profileJoined", `Joined ${joined}`);
+  setText("profileCreated", currentProfile.betsCreated || 0);
+  setText("profileAccepted", currentProfile.betsAccepted || 0);
+  setText("profileWins", currentProfile.wins || 0);
+  setText("profileLosses", currentProfile.losses || 0);
+  const totalDecided = (currentProfile.wins || 0) + (currentProfile.losses || 0);
+  setText("profileWinRate", totalDecided > 0 ? Math.round((currentProfile.wins / totalDecided) * 100) + "%" : "No decided bets yet");
 }
 
 // ---------- Live subscriptions ----------
@@ -495,27 +813,44 @@ function subscribeAll() {
     const map = new Map();
     snapA.forEach(d => map.set(d.id, d.data()));
     snapB.forEach(d => map.set(d.id, d.data()));
-    myBetsList.innerHTML = "";
-    myBetsEmpty.classList.toggle("hidden", map.size !== 0);
-    map.forEach((bet, id) => myBetsList.appendChild(slipCard(bet, id, { mode: "mine", showResultStamp: true })));
+    latestMyBets = Array.from(map, ([id, data]) => ({ id, data }));
+    renderMyBets();
   };
   unsubMine = onSnapshot(qMineA, renderMine);
   onSnapshot(qMineB, renderMine);
 
+  const qTx = query(collection(db, "transactions"), where("uid", "==", currentUser.uid), orderBy("createdAt", "desc"), limit(100));
+  onSnapshot(qTx, (snap) => {
+    const txs = [];
+    snap.forEach(d => txs.push(d.data()));
+    renderTransactions(txs);
+  });
+
   if (isAdminUnlocked()) {
-    const qAdmin = query(betsRef, where("status", "==", "matched"));
+    // Sorted client-side (not in the query) to avoid requiring a Firestore
+    // composite index for an 'in' filter + orderBy combo — that index can
+    // only be created via a link buried in the browser console, which is
+    // painful to discover on mobile.
+    const qAdmin = query(betsRef, where("status", "in", ["open", "matched"]));
     unsubAdmin = onSnapshot(qAdmin, (snap) => {
+      const rows = [];
+      snap.forEach(d => rows.push({ id: d.id, data: d.data() }));
+      rows.sort((a, b) => (b.data.createdAt?.seconds || 0) - (a.data.createdAt?.seconds || 0));
       adminBetsList.innerHTML = "";
-      adminBetsEmpty.classList.toggle("hidden", !snap.empty);
-      snap.forEach(d => adminBetsList.appendChild(slipCard(d.data(), d.id, { mode: "admin" })));
+      adminBetsEmpty.classList.toggle("hidden", rows.length !== 0);
+      rows.forEach(({ id, data }) => adminBetsList.appendChild(slipCard(data, id, { mode: "admin" })));
     });
   }
 
-  // keep balance display live
+  // keep balance display + profile live
   onSnapshot(doc(db, "users", currentUser.uid), (snap) => {
     if (snap.exists()) {
       currentProfile = snap.data();
       balanceValue.textContent = currentProfile.balance;
+      const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+      setText("dashBalance", currentProfile.balance);
+      setText("walletBalance", currentProfile.balance);
+      renderProfile();
     }
   });
 }

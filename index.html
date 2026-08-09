@@ -48,19 +48,69 @@
   </header>
 
   <nav class="tabbar">
-    <button class="tab-btn active" data-view="open">Open bets</button>
-    <button class="tab-btn" data-view="mine">My bets</button>
+    <button class="tab-btn active" data-view="dashboard">Home</button>
+    <button class="tab-btn" data-view="open">Open bets</button>
     <button class="tab-btn" data-view="create">Create bet</button>
+    <button class="tab-btn" data-view="mine">My bets</button>
+    <button class="tab-btn" data-view="wallet">Wallet</button>
+    <button class="tab-btn" data-view="profile">Profile</button>
     <button class="tab-btn hidden" id="adminTabBtn" data-view="admin">Admin</button>
   </nav>
 
   <main class="main">
 
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <div class="view-header">
+        <h2>Dashboard</h2>
+        <p class="view-sub">Your Betlink activity at a glance — virtual coins, demo data.</p>
+      </div>
+
+      <div class="dash-balance-card">
+        <span class="dash-balance-label">Balance</span>
+        <span class="dash-balance-value" id="dashBalance">0</span>
+        <span class="dash-balance-unit">BL Coins</span>
+      </div>
+
+      <div class="dash-stats-grid">
+        <div class="dash-stat-card">
+          <span class="dash-stat-value" id="statOpen">0</span>
+          <span class="dash-stat-label">Open</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-value" id="statActive">0</span>
+          <span class="dash-stat-label">Active</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-value" id="statWon">0</span>
+          <span class="dash-stat-label">Won</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-value" id="statLost">0</span>
+          <span class="dash-stat-label">Lost</span>
+        </div>
+      </div>
+
+      <h3 class="dash-section-title">Recent activity</h3>
+      <div id="dashActivityList" class="activity-list"></div>
+      <p id="dashActivityEmpty" class="empty-state hidden">No activity yet. Post or match a bet to see it here.</p>
+    </section>
+
     <!-- OPEN BETS -->
-    <section id="view-open" class="view active">
+    <section id="view-open" class="view">
       <div class="view-header">
         <h2>Open bets</h2>
         <p class="view-sub">Unmatched slips waiting for someone to take the other side.</p>
+      </div>
+
+      <div class="marketplace-controls">
+        <input type="text" id="betSearch" placeholder="Search team, player, or terms…" class="search-input">
+        <select id="betSort" class="sort-select">
+          <option value="newest">Newest</option>
+          <option value="closing">Closing soon</option>
+          <option value="lowest">Lowest stake</option>
+          <option value="highest">Highest stake</option>
+        </select>
       </div>
 
       <div class="sport-filter-row" id="sportFilterRow">
@@ -94,8 +144,86 @@
         <h2>My bets</h2>
         <p class="view-sub">Everything you've written or matched, live or settled.</p>
       </div>
+      <div class="my-bets-tabs" id="myBetsTabs">
+        <button class="my-bets-tab active" data-status="all">All</button>
+        <button class="my-bets-tab" data-status="open">Open</button>
+        <button class="my-bets-tab" data-status="matched">Active</button>
+        <button class="my-bets-tab" data-status="won">Won</button>
+        <button class="my-bets-tab" data-status="lost">Lost</button>
+        <button class="my-bets-tab" data-status="cancelled">Cancelled</button>
+      </div>
       <div id="myBetsList" class="slip-grid"></div>
       <p id="myBetsEmpty" class="empty-state hidden">You haven't placed a bet yet.</p>
+    </section>
+
+    <!-- WALLET -->
+    <section id="view-wallet" class="view">
+      <div class="view-header">
+        <h2>Wallet</h2>
+        <p class="view-sub">Demo virtual coin balance — not real money.</p>
+      </div>
+
+      <div class="wallet-summary-grid">
+        <div class="wallet-card highlight">
+          <span class="wallet-card-label">Balance</span>
+          <span class="wallet-card-value" id="walletBalance">0</span>
+        </div>
+        <div class="wallet-card">
+          <span class="wallet-card-label">Total won</span>
+          <span class="wallet-card-value" id="walletWon">0</span>
+        </div>
+        <div class="wallet-card">
+          <span class="wallet-card-label">Total lost</span>
+          <span class="wallet-card-value" id="walletLost">0</span>
+        </div>
+        <div class="wallet-card">
+          <span class="wallet-card-label">Total staked</span>
+          <span class="wallet-card-value" id="walletStaked">0</span>
+        </div>
+      </div>
+
+      <h3 class="dash-section-title">Transaction history</h3>
+      <div id="walletTxList" class="activity-list"></div>
+      <p id="walletTxEmpty" class="empty-state hidden">No transactions yet.</p>
+    </section>
+
+    <!-- PROFILE -->
+    <section id="view-profile" class="view">
+      <div class="view-header">
+        <h2>Profile</h2>
+        <p class="view-sub">Your Betlink demo account.</p>
+      </div>
+
+      <div class="profile-card">
+        <div class="profile-avatar" id="profileAvatar">?</div>
+        <div>
+          <p class="profile-name" id="profileName">—</p>
+          <p class="profile-joined" id="profileJoined">—</p>
+        </div>
+      </div>
+
+      <div class="wallet-summary-grid">
+        <div class="wallet-card">
+          <span class="wallet-card-label">Bets created</span>
+          <span class="wallet-card-value" id="profileCreated">0</span>
+        </div>
+        <div class="wallet-card">
+          <span class="wallet-card-label">Bets accepted</span>
+          <span class="wallet-card-value" id="profileAccepted">0</span>
+        </div>
+        <div class="wallet-card">
+          <span class="wallet-card-label">Wins</span>
+          <span class="wallet-card-value" id="profileWins">0</span>
+        </div>
+        <div class="wallet-card">
+          <span class="wallet-card-label">Losses</span>
+          <span class="wallet-card-value" id="profileLosses">0</span>
+        </div>
+      </div>
+      <div class="wallet-card highlight" style="margin-top: 0.9rem;">
+        <span class="wallet-card-label">Win rate</span>
+        <span class="wallet-card-value" id="profileWinRate">—</span>
+      </div>
     </section>
 
     <!-- CREATE BET -->
@@ -126,7 +254,8 @@
           <label>Your stake (coins)
             <input type="number" id="matchStake" min="1" step="1" required placeholder="100">
           </label>
-          <button type="submit" class="btn-primary">Post slip</button>
+          <p class="potential-return" id="matchPotentialReturn"></p>
+          <button type="submit" class="btn-primary">Review slip</button>
           <p class="auth-error" id="matchBetError"></p>
         </div>
       </form>
@@ -139,10 +268,11 @@
         <label>Your stake (coins)
           <input type="number" id="betStake" min="1" step="1" required placeholder="100">
         </label>
+        <p class="potential-return" id="customPotentialReturn"></p>
         <label>Resolves by
           <input type="date" id="betDeadline" required>
         </label>
-        <button type="submit" class="btn-primary">Post slip</button>
+        <button type="submit" class="btn-primary">Review slip</button>
         <p class="auth-error" id="createBetError"></p>
       </form>
     </section>
@@ -163,6 +293,21 @@
     Football data provided by the <a href="https://www.football-data.org" target="_blank" rel="noopener">Football-Data.org API</a>
   </footer>
 </div>
+
+<!-- Confirmation review panel (Section 3) -->
+<div id="reviewPanel" class="review-overlay hidden">
+  <div class="review-card">
+    <h3>Confirm your slip</h3>
+    <div id="reviewBody"></div>
+    <div class="review-actions">
+      <button id="reviewCancelBtn" class="slip-btn">Edit</button>
+      <button id="reviewConfirmBtn" class="slip-btn primary">Confirm &amp; post</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notifications (Section 14) -->
+<div id="toastHost" class="toast-host"></div>
 
 <!-- Firebase SDKs -->
 <script type="module" src="firebase-config.js"></script>
