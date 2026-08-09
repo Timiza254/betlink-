@@ -244,30 +244,104 @@ signInAnonymously(auth).catch(() => {
   nameError.textContent = "Couldn't connect. Check your connection and reload.";
 });
 
+// ---------- Profile initialization / legacy migration ----------
+async function ensureUserProfile(user) {
+  if (!user) return null;
+
+  const userRef = doc(db, "users", user.uid);
+
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(userRef);
+
+    if (!snap.exists()) return null;
+
+    const data = snap.data();
+
+    // Older Betlink profiles were created before the startingBalanceGranted
+    // marker existed. If such a legacy profile is sitting at 0 coins, repair
+    // it once with the demo starting balance. After this migration the marker
+    // prevents the balance from being reset on later visits.
+    if (data.startingBalanceGranted !== true) {
+      const patch = { startingBalanceGranted: true };
+
+      if (Number(data.balance) === 0) {
+        patch.balance = STARTING_BALANCE;
+        tx.update(userRef, patch);
+        logTransaction(
+          tx,
+          user.uid,
+          "starting_balance",
+          STARTING_BALANCE,
+          "Welcome bonus — demo virtual coins (legacy profile repaired)"
+        );
+        return { ...data, ...patch };
+      }
+
+      tx.update(userRef, patch);
+      return { ...data, ...patch };
+    }
+
+    return data;
+  });
+}
+
 // ---------- Name form (first-time setup) ----------
 nameForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   nameError.textContent = "";
+
   const name = nameInput.value.trim();
-  if (!name) return;
+  if (!name || !currentUser) return;
+
+  const submitBtn = nameForm.querySelector("button[type='submit']");
+  if (submitBtn) submitBtn.disabled = true;
+
   try {
     await runTransaction(db, async (tx) => {
       const userRef = doc(db, "users", currentUser.uid);
+      const existing = await tx.get(userRef);
+
+      // Never overwrite an existing account/balance from the name form.
+      if (existing.exists()) throw new Error("profile-exists");
+
       tx.set(userRef, {
         name,
         balance: STARTING_BALANCE,
+        startingBalanceGranted: true,
         betsCreated: 0,
         betsAccepted: 0,
         wins: 0,
         losses: 0,
         createdAt: serverTimestamp()
       });
-      logTransaction(tx, currentUser.uid, "starting_balance", STARTING_BALANCE, "Welcome bonus — demo virtual coins");
+
+      logTransaction(
+        tx,
+        currentUser.uid,
+        "starting_balance",
+        STARTING_BALANCE,
+        "Welcome bonus — demo virtual coins"
+      );
     });
-    currentProfile = { name, balance: STARTING_BALANCE, betsCreated: 0, betsAccepted: 0, wins: 0, losses: 0 };
+
+    currentProfile = {
+      name,
+      balance: STARTING_BALANCE,
+      startingBalanceGranted: true,
+      betsCreated: 0,
+      betsAccepted: 0,
+      wins: 0,
+      losses: 0
+    };
+
     enterApp();
   } catch (err) {
-    nameError.textContent = "Something went wrong. Try again.";
+    nameError.textContent =
+      err.message === "profile-exists"
+        ? "This demo account is already initialized. Reload the page."
+        : "Something went wrong. Try again.";
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 });
 
@@ -306,22 +380,34 @@ function enterApp() {
 // ---------- Auth state ----------
 onAuthStateChanged(auth, async (user) => {
   currentUser = user;
-  if (user) {
-    const snap = await getDoc(doc(db, "users", user.uid));
-    if (snap.exists()) {
-      currentProfile = snap.data();
-      enterApp();
-    } else {
-      // First time on this device — show name entry, stay on authScreen
-      currentProfile = null;
-    }
-  } else {
+
+  if (!user) {
     currentProfile = null;
     appShell.classList.add("hidden");
     authScreen.classList.remove("hidden");
     if (unsubOpen) unsubOpen();
     if (unsubMine) unsubMine();
     if (unsubAdmin) unsubAdmin();
+    return;
+  }
+
+  try {
+    // Load the existing profile and repair a legacy 0-coin profile once.
+    const profile = await ensureUserProfile(user);
+
+    if (profile) {
+      currentProfile = profile;
+      enterApp();
+    } else {
+      // First time on this device — show name entry.
+      currentProfile = null;
+      authScreen.classList.remove("hidden");
+      appShell.classList.add("hidden");
+    }
+  } catch (err) {
+    console.error("Betlink profile load failed:", err);
+    nameError.textContent =
+      "Couldn't load your demo account. Check Firebase/Firestore and reload.";
   }
 });
 
