@@ -95,6 +95,7 @@ const privateDashboardContent = document.getElementById("privateDashboardContent
 
 
 const balanceValue = document.getElementById("balanceValue");
+const balanceUnit = document.getElementById("balanceUnit");
 const logoutBtn = document.getElementById("logoutBtn");
 const adminTabBtn = document.getElementById("adminTabBtn");
 const adminUnlockBtn = document.getElementById("adminUnlockBtn");
@@ -501,7 +502,7 @@ function showPublicMode() {
   appShell.classList.remove("hidden");
 
   balanceValue.textContent = "Login";
-  document.getElementById("balanceUnit").textContent = "to view coins";
+  if (balanceUnit) balanceUnit.textContent = "to view coins";
 
   loginBtn.classList.remove("hidden");
   registerBtn.classList.remove("hidden");
@@ -526,7 +527,7 @@ function enterApp() {
   appShell.classList.remove("hidden");
 
   balanceValue.textContent = currentProfile ? currentProfile.balance : "—";
-  document.getElementById("balanceUnit").textContent = "coins";
+  if (balanceUnit) balanceUnit.textContent = "coins";
 
   loginBtn.classList.add("hidden");
   registerBtn.classList.add("hidden");
