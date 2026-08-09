@@ -2,7 +2,8 @@ import { firebaseApp, ADMIN_PASSCODE } from "./firebase-config.js";
 import { fetchUpcomingFixtures } from "./sports.js";
 import { clubColor } from "./club-colors.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged,
+  getAuth, setPersistence, browserLocalPersistence,
+  signInAnonymously, onAuthStateChanged,
   createUserWithEmailAndPassword, signInWithEmailAndPassword,
   EmailAuthProvider, linkWithCredential, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
@@ -16,6 +17,13 @@ const auth = getAuth(firebaseApp);
 const db = getFirestore(firebaseApp);
 
 const STARTING_BALANCE = 1000;
+
+// Keep registered users logged in while navigating around the app
+// and when the page is refreshed/reloaded.
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.error("Could not enable persistent login:", err);
+});
+
 
 // ============================================================
 // DATA LAYER
@@ -475,12 +483,30 @@ nameForm.addEventListener("submit", async (e) => {
 });
 
 async function signOutUser() {
+  unsubscribePrivateData();
   try {
     await signOut(auth);
   } catch (err) {
     console.error(err);
   }
   location.reload();
+}
+
+
+// ---------- User profile helper ----------
+async function ensureUserProfile(user) {
+  if (!user || user.isAnonymous) return null;
+
+  const userRef = doc(db, "users", user.uid);
+  const snap = await getDoc(userRef);
+
+  if (!snap.exists()) {
+    // Do not silently create a second 1,000-coin account for an existing
+    // authenticated user. New accounts are created only by registerForm.
+    return null;
+  }
+
+  return snap.data();
 }
 
 // ---------- Admin unlock (passcode) ----------
@@ -555,6 +581,7 @@ onAuthStateChanged(auth, async (user) => {
 
   if (!user) {
     currentProfile = null;
+    unsubscribePrivateData();
     showPublicMode();
     startPublicSession();
     return;
@@ -1060,6 +1087,18 @@ function renderProfile() {
   setText("profileLosses", currentProfile.losses || 0);
   const totalDecided = (currentProfile.wins || 0) + (currentProfile.losses || 0);
   setText("profileWinRate", totalDecided > 0 ? Math.round((currentProfile.wins / totalDecided) * 100) + "%" : "No decided bets yet");
+}
+
+
+function unsubscribePrivateData() {
+  [unsubOpen, unsubMine, unsubAdmin].forEach((fn) => {
+    if (typeof fn === "function") {
+      try { fn(); } catch (err) { console.error(err); }
+    }
+  });
+  unsubOpen = null;
+  unsubMine = null;
+  unsubAdmin = null;
 }
 
 // ---------- Live subscriptions ----------
