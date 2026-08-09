@@ -69,8 +69,6 @@ const appShell = document.getElementById("appShell");
 const nameForm = document.getElementById("nameForm");
 const nameInput = document.getElementById("nameInput");
 const nameError = document.getElementById("nameError");
-const loginBtn = document.getElementById("loginBtn");
-const registerBtn = document.getElementById("registerBtn");
 const loginForm = document.getElementById("loginForm");
 const registerForm = document.getElementById("registerForm");
 const loginEmail = document.getElementById("loginEmail");
@@ -358,8 +356,6 @@ function setAuthMode(mode) {
     : "Register to receive 1,000 demo BL Coins.";
 }
 
-loginBtn.addEventListener("click", () => openAuth("login"));
-registerBtn.addEventListener("click", () => openAuth("register"));
 document.getElementById("publicLoginCta").addEventListener("click", () => openAuth("login"));
 authCloseBtn.addEventListener("click", closeAuth);
 authLoginTab.addEventListener("click", () => setAuthMode("login"));
@@ -503,9 +499,6 @@ function showPublicMode() {
 
   balanceValue.textContent = "Login";
   if (balanceUnit) balanceUnit.textContent = "to view coins";
-
-  loginBtn.classList.remove("hidden");
-  registerBtn.classList.remove("hidden");
   logoutBtn.classList.add("hidden");
   adminUnlockBtn.classList.add("hidden");
 
@@ -528,9 +521,6 @@ function enterApp() {
 
   balanceValue.textContent = currentProfile ? currentProfile.balance : "—";
   if (balanceUnit) balanceUnit.textContent = "coins";
-
-  loginBtn.classList.add("hidden");
-  registerBtn.classList.add("hidden");
   logoutBtn.classList.remove("hidden");
   adminUnlockBtn.classList.toggle("hidden", !isAdminUnlocked());
 
